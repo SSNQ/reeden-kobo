@@ -9,6 +9,7 @@ echo "[launcher] $(date)"
 if [ -d "$STATE/active" ]; then
     if [ -f "$STATE/owner" ]; then read -r pid start < "$STATE/owner"; if same_process "$pid" "$start"; then echo "Already running"; exit 0; fi; fi
     "$APP/recover.sh"
+    [ ! -d "$STATE/active" ] || { echo "Previous session recovery is busy or failed; see launcher.log"; exit 14; }
 fi
 # Never take display ownership from KOReader. Return to Nickel first.
 for pid in $(pidof luajit 2>/dev/null); do

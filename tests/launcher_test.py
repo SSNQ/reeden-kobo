@@ -42,6 +42,7 @@ kill() {
 }
 ''')
     script(app / "bin/fb-guard", '''
+if [ "$1" = --recover-session ]; then exec /bin/sh "$2/recover.sh" --locked "$3"; fi
 echo "$*" >> "$(dirname "$0")/../framebuffer-calls"
 [ "$1" = --inspect ]
 ''')

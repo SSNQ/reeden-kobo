@@ -2,6 +2,8 @@
 #include <linux/fb.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -10,7 +12,24 @@
 #include <string.h>
 struct snapshot { uint32_t magic,w,h,stride,rotate; };
 struct update { uint32_t top,left,width,height,waveform,mode,marker,flags; int dither; };
+/* A POSIX record lock survives exec, not fork or the owner's death. Native UI
+ * children cannot keep a dead recovery worker's lock alive. Never unlink it. */
+static int recover_session(const char *app,const char *owner){
+    if(chdir(app)<0){perror("recovery directory");return 1;}
+    int fd=open("state/recovery.lock",O_RDWR|O_CREAT|O_NOFOLLOW|O_NONBLOCK,0600);
+    struct stat st;
+    if(fd<0||fstat(fd,&st)<0){perror("recovery lock");return 1;}
+    if(!S_ISREG(st.st_mode)||st.st_nlink!=1){fprintf(stderr,"Invalid recovery lock file\n");return 1;}
+    struct flock lock={.l_type=F_WRLCK,.l_whence=SEEK_SET};
+    if(fcntl(fd,F_SETLK,&lock)<0){
+        if(errno==EACCES||errno==EAGAIN)return 75;
+        perror("recovery lock");return 1;
+    }
+    execl("/bin/sh","sh","./recover.sh","--locked",owner,(char*)NULL);
+    perror("recovery shell");return 1;
+}
 int main(int argc,char **argv){
+    if(argc==4&&!strcmp(argv[1],"--recover-session"))return recover_session(argv[2],argv[3]);
     int inspect=argc==2&&!strcmp(argv[1],"--inspect"),save=argc==3&&!strcmp(argv[1],"--snapshot"),restore=argc==3&&!strcmp(argv[1],"--restore");
     if(!inspect&&!save&&!restore)return 64;
     int fd=open("/dev/fb0",restore?O_RDWR:O_RDONLY);struct fb_var_screeninfo v;struct fb_fix_screeninfo f;

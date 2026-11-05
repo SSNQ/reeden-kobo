@@ -218,9 +218,9 @@ static uint64_t deadline_locked(Display *d){
     return refresh_deadline(pixels_due,d->request_clean_at,allowed,monotonic_ns());
 }
 uint64_t display_deadline(Display *d){pthread_mutex_lock(&d->lock);uint64_t t=deadline_locked(d);pthread_mutex_unlock(&d->lock);return t;}
-static void flush(Display *d,const uint8_t *cover){
+static int flush(Display *d,const uint8_t *cover){
     uint64_t now=monotonic_ns();pthread_mutex_lock(&d->lock);
-    if(!cover&&now<deadline_locked(d)){pthread_mutex_unlock(&d->lock);return;}
+    if(!cover&&now<deadline_locked(d)){pthread_mutex_unlock(&d->lock);return 0;}
     if(!cover&&d->request_clean_at&&now>=d->request_clean_at){
         d->request_clean_at=0;
         bool same=d->committed_valid&&!memcmp(d->pending,d->committed,d->pending_stride*d->v.yres);
@@ -231,12 +231,12 @@ static void flush(Display *d,const uint8_t *cover){
             d->full=true;d->dirty=true;
         }
     }
-    if(!cover&&!d->dirty){pthread_mutex_unlock(&d->lock);return;}
+    if(!cover&&!d->dirty){pthread_mutex_unlock(&d->lock);return 0;}
     const uint8_t *source=cover?cover:d->pending;
     RefreshPlan plan;
     if(!refresh_plan(d->committed_valid?d->committed:NULL,source,d->pending_stride,
                      d->v.xres,d->v.yres,cover||d->full,d->mode,&plan)){
-        d->dirty=false;pthread_mutex_unlock(&d->lock);return;
+        d->dirty=false;pthread_mutex_unlock(&d->lock);return cover?-1:0;
     }
     TurnTrace storage,*trace=NULL;
     if(d->turn_options.trace){
@@ -287,9 +287,9 @@ static void flush(Display *d,const uint8_t *cover){
     if(animate||part_count)plan.region=(RefreshRegion){0,0,d->v.xres,d->v.yres};
     if(trace)trace->planned=monotonic_ns();
     /* Wake before either wait or submit, as in KOReader's MTK path. */
-    if(display_command("fiti_power 1")){perror("display wake");app_quit=1;turn_trace_dump(trace,"wake-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return;}
-    if(display_wait_traced(d,trace)<0){fprintf(stderr,"[display] wait for prior update failed: %s\n",strerror(errno));app_quit=1;turn_trace_dump(trace,"prior-wait-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return;}
-    if(inversion_change&&display_inversion(d,plan.hw_invert)){perror("display inversion");app_quit=1;turn_trace_dump(trace,"invert-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return;}
+    if(display_command("fiti_power 1")){perror("display wake");app_quit=1;turn_trace_dump(trace,"wake-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return -1;}
+    if(display_wait_traced(d,trace)<0){fprintf(stderr,"[display] wait for prior update failed: %s\n",strerror(errno));app_quit=1;turn_trace_dump(trace,"prior-wait-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return -1;}
+    if(inversion_change&&display_inversion(d,plan.hw_invert)){perror("display inversion");app_quit=1;turn_trace_dump(trace,"invert-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return -1;}
     FrameCapture capture={.fd=-1};unsigned quality_status=0;
     if(semantic_turn){
         FrameEvidenceInfo info={.width=d->v.xres,.height=d->v.yres,.logical_stride=d->pending_stride,
@@ -328,7 +328,7 @@ static void flush(Display *d,const uint8_t *cover){
         struct update u={0};
         int bands=animate?page_turn_bands(d,forward,plan.night,&u,trace):
                   part_count?night_color_parts(d,parts,part_count,&u,trace):0;
-        if(bands<0){frame_capture_end(&capture,"sequence-wait-error",d->last_accepted_marker,0);turn_trace_dump(trace,"sequence-wait-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return;}
+        if(bands<0){frame_capture_end(&capture,"sequence-wait-error",d->last_accepted_marker,0);turn_trace_dump(trace,"sequence-wait-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return -1;}
         /* Diagnostic comparison only, default OFF. Reuse the ordinary gray
          * reading waveform/mode/flags after ALL strip markers have completed.
          * No forced GC16, no pixel changes, no claimed optical improvement.
@@ -343,7 +343,7 @@ static void flush(Display *d,const uint8_t *cover){
             else{
                 if(wait_marker(d,&q,true,trace)<0){
                     app_quit=1;frame_capture_end(&capture,"quality-wait-error",q.marker,3);
-                    turn_trace_dump(trace,"quality-wait-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return;
+                    turn_trace_dump(trace,"quality-wait-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return -1;
                 }
                 d->completed_marker=q.marker;d->quality_refreshes++;quality_status=1;u=q;
                 fprintf(stderr,"[text-quality] completed ordinary whole-page comparison wave=%u mode=1 flags=0 marker=%u\n",q.waveform,q.marker);
@@ -355,7 +355,7 @@ static void flush(Display *d,const uint8_t *cover){
             /* Never call an unconfirmed target the committed image. This
              * error-path fix leaves successful profile timings/waves intact. */
             if(!bands){
-                if(wait_marker(d,&u,true,trace)<0){app_quit=1;frame_capture_end(&capture,"complete-error",u.marker,quality_status);turn_trace_dump(trace,"complete-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return;}
+                if(wait_marker(d,&u,true,trace)<0){app_quit=1;frame_capture_end(&capture,"complete-error",u.marker,quality_status);turn_trace_dump(trace,"complete-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return -1;}
                 d->completed_marker=u.marker;
             }
             for(unsigned y=plan.region.top;y<endy;y++)memcpy(
@@ -380,7 +380,7 @@ static void flush(Display *d,const uint8_t *cover){
     frame_capture_pixels(&capture,"fb-complete.bin",d->mem,d->length);
     frame_capture_end(&capture,app_quit?"quit-or-error":d->failures?"send-error":"complete",d->last_accepted_marker,quality_status);
     turn_trace_dump(trace,app_quit?"quit-or-error":d->failures?"send-error":"complete",monotonic_ns());
-    d->dirty=d->failures>0;pthread_mutex_unlock(&d->lock);
+    d->dirty=d->failures>0;int result=(d->failures||app_quit)?-1:0;pthread_mutex_unlock(&d->lock);return result;
 }
 void display_flush(Display *d){flush(d,NULL);}
 static int display_wait_traced(Display *d,TurnTrace *trace){
@@ -428,6 +428,6 @@ int display_cover(Display *d,const char *path,unsigned width,unsigned height,uns
             p[3]=255;
         }
     }
-    flush(d,bgra);int result=display_wait(d);free(raw);free(bgra);return result;
+    int result=flush(d,bgra);free(raw);free(bgra);return result;
 }
 void display_close(Display *d){if(d->mem&&d->hw_state_known){display_wait(d);if(display_inversion(d,false))perror("reset display inversion");}if(d->mem)munmap(d->mem,d->length);if(d->fd>=0)close(d->fd);free(d->pending);free(d->committed);pthread_mutex_destroy(&d->lock);}

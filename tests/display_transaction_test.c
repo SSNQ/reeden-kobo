@@ -379,6 +379,12 @@ int main(void){
     d.dirty=true;flush_now(&d);assert(last_wave==REFRESH_GLKW16&&last_flags==0&&!inverted);
     snprintf(path,sizeof(path),"%s/cover.y8",root);FILE *cover=fopen(path,"wb");assert(cover);
     uint8_t white[4096];memset(white,255,sizeof(white));assert(fwrite(white,1,sizeof(white),cover)==sizeof(white));fclose(cover);
+    unsigned before_cover=d.refreshes,confirmed=d.completed_marker;
+    uint8_t old_pixel=d.committed[0];
+    fail_normal_once=true;
+    assert(display_cover(&d,path,64,64,1)<0);
+    assert(!app_quit&&d.failures==1&&d.refreshes==before_cover&&d.completed_marker==confirmed);
+    assert(d.committed[0]==old_pixel&&!outstanding);
     assert(!display_cover(&d,path,64,64,1));assert(!inverted&&last_wave==REFRESH_GC16);
     unlink(path);
     /* 1.43.2+ RGB (3-channel) and RGBA (4-channel transparent over committed page) sleep covers. */
