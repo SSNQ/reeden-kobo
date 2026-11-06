@@ -121,5 +121,11 @@ exec /bin/COMMAND "$@"
         assert entry.read_bytes() == old_menu, fault
         assert not list(entry.parent.glob('.reeden-kobo-menu-*')), fault
 
+    entry.write_bytes(b'my extra commands\n')
+    stage = build_stage(base, 'custom-menu', 'v5')
+    r = run(stage, '--upgrade')
+    assert r.returncode == 0 and entry.read_bytes() == b'my extra commands\n', (r.stdout, r.stderr)
+    assert (dest / 'nickelmenu.conf').read_bytes() == old_menu
+
 print('PASS: install.sh fresh install, overwrite refusal, active-session guard, '
       'data preservation, checksum refusal, and copy/promotion/menu rollback')

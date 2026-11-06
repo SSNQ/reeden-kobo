@@ -107,6 +107,13 @@ class OfficialCoreTest(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             install.validate_official_core(self.core)
 
+    def test_finder_metadata_recommends_original_zip_without_weakening_manifest(self):
+        (self.core / 'data/.DS_Store').write_bytes(b'metadata')
+        with self.assertRaisesRegex(ValueError, 'Reeden-kindle.zip'):
+            install.validate_official_core(self.core)
+        _, version = install.load_official_input(self.valid_zip, self.extract)
+        self.assertEqual(version, '1.43.2+791')
+
     def test_invalid_candidates_do_not_hide_valid_later_zip_or_mix_extractions(self):
         corrupt = self.base / 'corrupt.zip'
         corrupt.write_bytes(b'PK truncated')

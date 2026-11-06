@@ -65,7 +65,24 @@ if [ -e "$DEST" ]; then
 fi
 mv "$SOURCE" "$DEST"
 PROMOTED=1
-mv -f "$MENU_STAGE" "$ENTRY"
+keep_menu=0
+if [ -L "$ENTRY" ] || { [ -e "$ENTRY" ] && [ ! -f "$ENTRY" ]; }; then
+    echo 'Menu is not a regular file; refusing to replace it.'; exit 1
+elif [ -f "$ENTRY" ]; then
+    if [ -z "$BACKUP" ] || [ ! -f "$BACKUP/nickelmenu.conf" ] || [ -L "$BACKUP/nickelmenu.conf" ]; then
+        keep_menu=1
+    elif cmp -s "$ENTRY" "$BACKUP/nickelmenu.conf"; then :
+    else
+        result=$?
+        [ "$result" -eq 1 ] || { echo 'Menu comparison failed; keeping previous installation.'; exit 1; }
+        keep_menu=1
+    fi
+fi
+if [ "$keep_menu" -eq 1 ]; then
+    echo "Custom menu retained; new default is $DEST/nickelmenu.conf."
+else
+    mv -f "$MENU_STAGE" "$ENTRY"
+fi
 COMMITTED=1
 sync
 if [ -n "$BACKUP" ]; then

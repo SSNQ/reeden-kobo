@@ -2,7 +2,9 @@ name: CI & Release
 
 on:
   push:
-    branches: [ main, master ]
+    # Every branch, not just main: feature branches such as improve/usb-preflight used to
+    # get no CI at all until they reached a pull request.
+    branches: [ '**' ]
     tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
@@ -86,6 +88,8 @@ jobs:
         shell: bash
         run: |
           python tests/oneclick_installer_test.py
+          python tests/usb_preflight_test.py
+          python tests/update_flow_test.py
           python tests/uninstall_test.py
           python tests/archive_security_test.py
           python tests/official_core_test.py

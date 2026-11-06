@@ -3,7 +3,7 @@ set -u
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$DIR" || exit 1
 echo "=================================================="
-echo "  Reeden Kobo (0.7.5) 一键卸载工具 (macOS)"
+echo "  Reeden Kobo 一键卸载工具 (macOS)"
 echo "=================================================="
 python3 "$DIR/uninstall.py" "$@"
 status=$?

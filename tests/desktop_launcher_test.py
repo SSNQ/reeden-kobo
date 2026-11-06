@@ -12,7 +12,7 @@ with tempfile.TemporaryDirectory(prefix='reeden-launcher-') as tmp:
     root.mkdir()
     for name in ['install.py', 'uninstall.py']:
         shutil.copyfile(SOURCE / name, root / name)
-    for action in ('安装', '卸载'):
+    for action in ('安装', '更新', '卸载'):
         for suffix in ('Windows.bat', 'macOS.command', 'Linux.sh'):
             name = f'一键{action}-{suffix}'
             shutil.copyfile(SOURCE / name, root / name)
@@ -26,4 +26,4 @@ with tempfile.TemporaryDirectory(prefix='reeden-launcher-') as tmp:
                 result = subprocess.run(command + [option], input='\n', capture_output=True,
                                         text=True, encoding='utf-8', errors='replace', timeout=20)
                 assert result.returncode == expected, (command, option, result.returncode, result.stdout, result.stderr)
-print('PASS: desktop install/uninstall launchers preserve success and argument-error exit status')
+print('PASS: desktop install/update/uninstall launchers preserve success and argument-error exit status')

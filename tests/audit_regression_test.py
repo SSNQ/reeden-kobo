@@ -36,6 +36,9 @@ for failure in ('copy', 'promote', 'menu', 'space'):
         manifest(pkg)
         dest = mount / '.adds/reeden-kobo'; (dest / 'userdata').mkdir(parents=True)
         (dest / 'userdata/progress').write_text('old-progress'); (dest / 'payload').write_text('old')
+        # The previous install shipped the stock menu, so the live entry is replaceable;
+        # a customised or unreadable entry is intentionally kept instead.
+        (dest / 'nickelmenu.conf').write_text('old-menu\n')
         entry = mount / '.adds/nm/reeden-kobo'; entry.write_text('old-menu\n')
         real_copy = installer.copytree_fat32_safe; real_rename = Path.rename
 
