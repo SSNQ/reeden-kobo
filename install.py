@@ -689,7 +689,7 @@ KOBO_EXCLUDE_SYNC_FOLDERS = f'({KOBO_EXCLUDE_SYNC_FOLDERS_INNER})'
 
 
 def _unescape_qsettings_value(raw: str) -> str:
-    """Unescape Qt QSettings INI backslash sequences (e.g. \\. -> \.)."""
+    r"""Unescape Qt QSettings INI backslash sequences (e.g. \\. -> \.)."""
     out: list[str] = []
     i = 0
     n = len(raw)
