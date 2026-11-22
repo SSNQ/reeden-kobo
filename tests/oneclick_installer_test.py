@@ -76,6 +76,8 @@ with tempfile.TemporaryDirectory(prefix='reeden-oneclick-test-') as tmp:
     installed = mount / '.adds/reeden-kobo'
     assert (installed / 'hello.txt').read_text(encoding='utf-8') == 'version-1\n'
     assert (mount / '.adds/nm/reeden-kobo').is_file()
+    conf_text = (mount / '.kobo/Kobo/Kobo eReader.conf').read_text(encoding='utf-8')
+    assert '[FeatureSettings]' in conf_text and install_mod.KOBO_EXCLUDE_SYNC_FOLDERS in conf_text
 
     # Add user reading data, books, and diagnostics/ssh
     (installed / 'userdata').mkdir(parents=True)

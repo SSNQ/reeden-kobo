@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reeden Kobo (0.7.8) One-Click Builder & Installer.
+"""Reeden Kobo (0.7.9) One-Click Builder & Installer.
 
 Combines the verified MIT Kobo compatibility layer with the user's unmodified
 official Reeden Kindle 1.43.1+780 or 1.43.2+791 core and pinned Debian Bullseye ARMHF runtime
@@ -19,6 +19,7 @@ import os
 import pathlib
 import platform
 import posixpath
+import re
 import shutil
 import ssl
 import stat
@@ -46,7 +47,7 @@ SUPPORTED_CORES = {
     },
 }
 OFFICIAL_LATEST_URL = 'https://download.reeden.app/Reeden/latest/Reeden-kindle.zip'
-PORT_VERSION = '0.7.8-experimental'
+PORT_VERSION = '0.7.9-experimental'
 SUPPORTED_PRODUCT = '393'
 
 
@@ -347,7 +348,7 @@ def download_official_core(temp_root: pathlib.Path) -> tuple[pathlib.Path, str]:
         result = None
         try:
             print(f'[1/4] 正在从 Reeden 官网下载并校验 ({OFFICIAL_LATEST_URL}, {attempt + 1}/3) ...')
-            req = urllib.request.Request(OFFICIAL_LATEST_URL, headers={'User-Agent': 'reeden-kobo-installer/0.7.8'})
+            req = urllib.request.Request(OFFICIAL_LATEST_URL, headers={'User-Agent': 'reeden-kobo-installer/0.7.9'})
             with open_url_with_cert_fallback(req, timeout=180) as resp, partial.open('wb') as out:
                 shutil.copyfileobj(resp, out)
                 expected_size = resp.headers.get('Content-Length')
@@ -416,7 +417,7 @@ def download_verified(url: str, sha256: str, cache_dir: pathlib.Path, alt_dirs: 
     cache_dir.mkdir(parents=True, exist_ok=True)
     dest = cache_dir / filename
     print(f'      下载依赖: {filename} ...')
-    req = urllib.request.Request(url, headers={'User-Agent': 'reeden-kobo-installer/0.7.8'})
+    req = urllib.request.Request(url, headers={'User-Agent': 'reeden-kobo-installer/0.7.9'})
     with open_url_with_cert_fallback(req, timeout=60) as resp, dest.open('wb') as out:
         shutil.copyfileobj(resp, out)
     if sha256_file(dest) != sha256:
@@ -683,6 +684,167 @@ def parse_kobo_product(mount: pathlib.Path) -> tuple[str, str]:
     return product, firmware
 
 
+KOBO_EXCLUDE_SYNC_FOLDERS_INNER = r'\\.(?!kobo|adobe).+|([^.][^/]*/)+\\..+'
+KOBO_EXCLUDE_SYNC_FOLDERS = f'({KOBO_EXCLUDE_SYNC_FOLDERS_INNER})'
+
+
+def _unescape_qsettings_value(raw: str) -> str:
+    """Unescape Qt QSettings INI backslash sequences (e.g. \\. -> \.)."""
+    out: list[str] = []
+    i = 0
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        if ch == '\\' and i + 1 < n:
+            out.append(raw[i + 1])
+            i += 2
+        else:
+            out.append(ch)
+            i += 1
+    return ''.join(out)
+
+
+def _kobo_exclude_pattern_covers_adds(raw_value: str) -> bool:
+    """Return True if a QSettings ExcludeSyncFolders value already ignores .adds."""
+    val = raw_value.strip()
+    if not val:
+        return False
+    if len(val) >= 2 and val[0] == '"' and val[-1] == '"':
+        val = val[1:-1]
+    pattern = _unescape_qsettings_value(val)
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        return False
+    return bool(rx.search('.adds')) and bool(rx.search('.adds/reeden-kobo'))
+
+
+def update_kobo_exclude_sync_folders_text(text: str) -> tuple[str, str]:
+    """Ensure [FeatureSettings]/ExcludeSyncFolders ignores .adds without clobbering other settings.
+
+    Returns (updated_text, status) where status is one of:
+      - 'already_configured': existing rule already excludes .adds (text unchanged)
+      - 'added': added ExcludeSyncFolders (and [FeatureSettings] if missing)
+      - 'updated': filled empty ExcludeSyncFolders or merged with custom rule
+      - 'manual_required': existing rule is quoted/unparseable; text unchanged
+    """
+    lines = text.splitlines()
+    current_section: str | None = None
+    feature_sections: list[tuple[int, int]] = []  # (header_idx, end_idx_exclusive)
+    feature_start: int | None = None
+    exclude_entries: list[tuple[int, str]] = []  # (line_idx, raw_value)
+
+    for idx, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if stripped.startswith('[') and stripped.endswith(']') and len(stripped) >= 2:
+            if feature_start is not None:
+                feature_sections.append((feature_start, idx))
+                feature_start = None
+            current_section = stripped[1:-1].strip()
+            if current_section == 'FeatureSettings':
+                feature_start = idx
+            continue
+        if current_section == 'FeatureSettings':
+            m = re.match(r'^\s*ExcludeSyncFolders\s*=(.*)$', raw_line)
+            if m:
+                exclude_entries.append((idx, m.group(1)))
+
+    if feature_start is not None:
+        feature_sections.append((feature_start, len(lines)))
+
+    target_line = f'ExcludeSyncFolders={KOBO_EXCLUDE_SYNC_FOLDERS}'
+
+    if exclude_entries:
+        last_idx, last_val = exclude_entries[-1]
+        trimmed = last_val.strip()
+        if not trimmed:
+            new_lines = list(lines)
+            new_lines[last_idx] = target_line
+            return '\n'.join(new_lines) + '\n', 'updated'
+        if _kobo_exclude_pattern_covers_adds(trimmed):
+            return text, 'already_configured'
+        # Preserve custom non-empty regex if unquoted and valid
+        if trimmed.startswith('"') or trimmed.endswith('"'):
+            return text, 'manual_required'
+        try:
+            re.compile(_unescape_qsettings_value(trimmed))
+        except re.error:
+            return text, 'manual_required'
+        merged_val = f'(({trimmed})|{KOBO_EXCLUDE_SYNC_FOLDERS_INNER})'
+        try:
+            merged_rx = re.compile(_unescape_qsettings_value(merged_val))
+        except re.error:
+            return text, 'manual_required'
+        if not (merged_rx.search('.adds') and merged_rx.search('.adds/reeden-kobo')) or merged_rx.search('.kobo'):
+            return text, 'manual_required'
+        new_lines = list(lines)
+        new_lines[last_idx] = f'ExcludeSyncFolders={merged_val}'
+        return '\n'.join(new_lines) + '\n', 'updated'
+
+    if feature_sections:
+        _, end_idx = feature_sections[-1]
+        insert_at = end_idx
+        while insert_at > feature_sections[-1][0] + 1 and not lines[insert_at - 1].strip():
+            insert_at -= 1
+        new_lines = lines[:insert_at] + [target_line] + lines[insert_at:]
+        return '\n'.join(new_lines) + '\n', 'added'
+
+    new_lines = list(lines)
+    if new_lines and new_lines[-1].strip():
+        new_lines.append('')
+    new_lines.extend(['[FeatureSettings]', target_line])
+    return '\n'.join(new_lines) + '\n', 'added'
+
+
+def _validate_kobo_conf_path(mount: pathlib.Path) -> pathlib.Path:
+    kobo_dir = mount / '.kobo'
+    conf_dir = kobo_dir / 'Kobo'
+    conf_path = conf_dir / 'Kobo eReader.conf'
+    for candidate in (kobo_dir, conf_dir, conf_path):
+        if candidate.is_symlink():
+            raise RuntimeError(f'检测到不安全的符号链接，已拒绝修改配置: {candidate}')
+    if conf_dir.exists() and not conf_dir.is_dir():
+        raise RuntimeError(f'配置目录异常，不是有效目录: {conf_dir}')
+    if conf_path.exists() and not conf_path.is_file():
+        raise RuntimeError(f'配置文件异常，不是普通文件: {conf_path}')
+    return conf_path
+
+
+def ensure_kobo_exclude_sync_folders(mount: pathlib.Path) -> str:
+    """Configure Kobo Nickel to skip .adds/ so Reeden assets are not indexed as books."""
+    conf_path = _validate_kobo_conf_path(mount)
+    if conf_path.exists():
+        raw_bytes = conf_path.read_bytes()
+        original_text = raw_bytes.decode('utf-8', errors='surrogateescape')
+    else:
+        original_text = ''
+
+    updated_text, status = update_kobo_exclude_sync_folders_text(original_text)
+    if status in ('already_configured', 'manual_required'):
+        return status
+
+    conf_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path: pathlib.Path | None = None
+    try:
+        fd, tmp_name = tempfile.mkstemp(prefix='.Kobo-eReader.conf.reeden-', dir=conf_path.parent)
+        tmp_path = pathlib.Path(tmp_name)
+        try:
+            with os.fdopen(fd, 'wb') as f:
+                f.write(updated_text.encode('utf-8', errors='surrogateescape'))
+                f.flush()
+                os.fsync(f.fileno())
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        os.replace(tmp_path, conf_path)
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+    cleanup_appledouble(conf_path.parent / '._Kobo eReader.conf')
+    return status
+
+
 def choose_kobo_usb_mount(mounts: list[pathlib.Path]) -> pathlib.Path:
     if not mounts:
         raise RuntimeError('未检测到 Kobo USB 盘，请连接数据线并在 Kobo 屏幕点击「连接」。')
@@ -716,6 +878,7 @@ def install_to_usb_mount(pkg_dir: pathlib.Path, mount: pathlib.Path, allow_upgra
         if (dest / 'state' / 'active').exists():
             raise RuntimeError('检测到 Reeden 会话锁 state/active 仍存在，请先正常退出 Reeden 再升级。')
 
+    _validate_kobo_conf_path(mount)
     keeps = ('userdata', 'storage', 'diagnostics/ssh')
     needed = sum(p.stat().st_size for p in pkg_dir.rglob('*') if p.is_file())
     for keep in keeps:
@@ -782,11 +945,33 @@ def install_to_usb_mount(pkg_dir: pathlib.Path, mount: pathlib.Path, allow_upgra
         cleanup_appledouble(nm_dir / '._reeden-kobo')
     except OSError:
         print('提示：安装已完成，macOS 元数据文件需在弹出前手动清理。')
+    try:
+        exclude_status = ensure_kobo_exclude_sync_folders(mount)
+        if exclude_status in ('added', 'updated') and hasattr(os, 'sync'):
+            os.sync()
+    except OSError as exc:
+        print(f'⚠️  未能自动更新 .kobo/Kobo/Kobo eReader.conf ({exc})。')
+        exclude_status = 'manual_required'
     if backup is not None:
         print(f'✅ USB 一键升级完成！原阅读进度、笔记、冷暖光设置和书库已保留（旧版备份于 {backup.name}）。')
     else:
         print(f'✅ USB 一键安装完成！所有 {len(sums_lines)} 个文件已在 Kobo 磁盘上通过 SHA-256 校验。')
-    print('👉 下一步：安全弹出 Kobo USB 盘，回到 Kobo 原生主界面，点击右下角 NickelMenu →「Reeden Kobo (test)」即可启动。')
+    if exclude_status in ('added', 'updated'):
+        print('ℹ️  已自动配置 Kobo 隐藏目录忽略规则 (ExcludeSyncFolders)，防止原生书架扫描 Reeden 图标与资源。')
+        if backup is not None:
+            print('👉 重要提示：若升级前原生书架已扫入 Reeden 图标，请安全弹出并重启一次 Kobo 让规则生效并清理旧条目；如清理时原系统删除了部分已索引资源，重新运行一次一键安装（保留数据升级）即可恢复完整文件。')
+        else:
+            print('👉 下一步：安全弹出 Kobo USB 盘；如本机是首次配置忽略规则，建议先重启一次 Kobo 让原系统加载配置，再点击右下角 NickelMenu →「Reeden Kobo (test)」启动。')
+    elif exclude_status == 'already_configured':
+        print('ℹ️  Kobo 隐藏目录忽略规则 (ExcludeSyncFolders) 已就绪，保持原配置不变。')
+        print('👉 下一步：安全弹出 Kobo USB 盘，回到 Kobo 原生主界面，点击右下角 NickelMenu →「Reeden Kobo (test)」即可启动。')
+    else:
+        print(
+            '⚠️  检测到自定义且无法自动合并的 ExcludeSyncFolders 配置，未改动 .kobo/Kobo/Kobo eReader.conf。\n'
+            f'    为避免原生书架将 Reeden 图标扫成未读图书，请手动确认 [FeatureSettings] 中包含：\n'
+            f'    ExcludeSyncFolders={KOBO_EXCLUDE_SYNC_FOLDERS}'
+        )
+        print('👉 下一步：安全弹出 Kobo USB 盘，回到 Kobo 原生主界面，点击右下角 NickelMenu →「Reeden Kobo (test)」即可启动。')
 
 
 def install_via_ssh(

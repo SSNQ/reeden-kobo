@@ -86,6 +86,7 @@ jobs:
         shell: bash
         run: |
           python tests/oneclick_installer_test.py
+          python tests/kobo_exclude_sync_test.py
           python tests/uninstall_test.py
           python tests/archive_security_test.py
           python tests/official_core_test.py

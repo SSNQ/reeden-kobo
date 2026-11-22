@@ -71,6 +71,8 @@ exec /bin/COMMAND "$@"
     assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
     assert (dest / 'payload-v1.txt').is_file() and entry.is_file()
     assert not stage1.exists(), 'stage dir should have been moved away'
+    kobo_conf = onboard / '.kobo' / 'Kobo' / 'Kobo eReader.conf'
+    assert kobo_conf.is_file() and 'ExcludeSyncFolders=(\\.(?!kobo|adobe).+|([^.][^/]*/)+\\..+)' in kobo_conf.read_text(encoding='utf-8')
 
     # 2. Refuse to overwrite without --upgrade
     stage2 = build_stage(base, '20260101-000002', 'v2')
