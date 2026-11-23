@@ -380,9 +380,16 @@ int main(int argc,char **argv){
         if(acquired&&!sleeping)display_flush(&screen);
         if(acquired&&sleeping&&cover_at&&monotonic_ns()>=cover_at){
             cover_at=0;
-            if(*cover_path){if(display_cover(&screen,cover_path,cover_width,cover_height,cover_channels))perror("sleep cover");else fprintf(stderr,"[sleep-cover] displayed Reeden image channels=%u\n",cover_channels);}
+            if(*cover_path){
+                if(display_cover(&screen,cover_path,cover_width,cover_height,cover_channels)<0){
+                    fprintf(stderr,"[sleep-cover] image not confirmed; cancelling suspend\n");
+                    if(!app_quit)set_sleep(&touch,false);
+                    continue;
+                }
+                fprintf(stderr,"[sleep-cover] displayed Reeden image channels=%u\n",cover_channels);
+            }
             else fprintf(stderr,"[sleep-cover] not registered; keeping current page\n");
-            display_wait(&screen);
+            if(display_wait(&screen)<0){perror("sleep display completion");app_quit=1;continue;}
             write_number("/sys/class/backlight/mxc_msp430.0/brightness",0);
             char marker[4096];snprintf(marker,sizeof(marker),"%s/state/power-screen-only",root);
             if(power_worker<0&&access(marker,F_OK)!=0){

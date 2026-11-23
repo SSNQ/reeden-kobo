@@ -18,13 +18,16 @@ while [ -d "$STATE/active" ]; do
     heartbeat="/tmp/reeden-kobo-${HOST:-none}.heartbeat"
     # Compatibility with the previous installed host during recovery/update.
     [ ! -f "$STATE/heartbeat" ] || heartbeat="$STATE/heartbeat"
+    check_heartbeat=true
     if [ -f "$STATE/asleep" ]; then
         # A suspended kernel stops this guardian too. Once the helper has
         # returned from mem, sleeping is no longer an unlimited exemption.
         phase=none; phase_at=0
         if [ -f "$STATE/power-phase" ]; then read -r phase phase_at phase_pid < "$STATE/power-phase"; fi
         case "$phase:$phase_at" in
+            suspended:*) check_heartbeat=false;;
             preparing:*|resuming:*|complete:*)
+                check_heartbeat=false
                 read -r boot_seconds boot_rest < /proc/uptime
                 boot_seconds=${boot_seconds%%.*}
                 case "$phase_at" in ''|*[!0-9]*) phase_at=$boot_seconds;; esac
@@ -34,11 +37,15 @@ while [ -d "$STATE/active" ]; do
                 fi
                 ;;
         esac
-    elif [ -f "$heartbeat" ]; then
-        last=$(stat -c %Y "$heartbeat" 2>/dev/null || echo "$started")
-        if [ $((now-last)) -gt 20 ]; then echo "[guardian] heartbeat timeout" >> "$APP/logs/launcher.log"; break; fi
-    elif [ $((now-started)) -ge 30 ]; then
-        echo "[guardian] no heartbeat" >> "$APP/logs/launcher.log"; break
+    fi
+    # A charging/screen-only lock does not suspend the host or its heartbeat.
+    if [ "$check_heartbeat" = true ]; then
+        if [ -f "$heartbeat" ]; then
+            last=$(stat -c %Y "$heartbeat" 2>/dev/null || echo "$started")
+            if [ $((now-last)) -gt 20 ]; then echo "[guardian] heartbeat timeout" >> "$APP/logs/launcher.log"; break; fi
+        elif [ $((now-started)) -ge 30 ]; then
+            echo "[guardian] no heartbeat" >> "$APP/logs/launcher.log"; break
+        fi
     fi
     sleep 5
 done
