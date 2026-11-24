@@ -61,8 +61,10 @@ int display_open(Display *d){
     if(!turn_options_load(&d->turn_options))fprintf(stderr,"[page-turn] invalid experiment configuration; stable profile retained\n");
     if(!color_options_load(&d->color_profile))fprintf(stderr,"[color-refresh] invalid configuration; smooth profile retained\n");
     if(!frame_evidence_options_load(&d->evidence_options))fprintf(stderr,"[frame-evidence] invalid configuration; diagnostics disabled\n");
-    if(d->evidence_options.directory[0]||d->evidence_options.quality_after_turn||d->evidence_options.reagl_bands)d->turn_options.trace=true;
-    fprintf(stderr,"[color-refresh] profile=%s\n",d->color_profile==COLOR_REFRESH_LEGACY?"legacy":"smooth");
+    if(d->evidence_options.directory[0]||d->evidence_options.quality_after_turn)d->turn_options.trace=true;
+    fprintf(stderr,"[color-refresh] profile=%s text_bands=%s\n",
+            d->color_profile==COLOR_REFRESH_LEGACY?"legacy":"smooth",
+            d->evidence_options.reagl_bands?"reagl":"stable");
     const char *p=getenv("REEDEN_FB");if(!p)p="/dev/fb0";
     d->fd=open(p,O_RDONLY|O_CLOEXEC);if(d->fd<0)return -1;
     if(ioctl(d->fd,FBIOGET_VSCREENINFO,&d->v)||ioctl(d->fd,FBIOGET_FSCREENINFO,&d->f))return -1;
@@ -91,32 +93,58 @@ bool display_present(Display *d,const void *pixels,size_t row,size_t height){
     uint64_t arrived=d->turn_options.trace?monotonic_ns():0;
     pthread_mutex_lock(&d->lock);
     bool changed=!d->frames;
+    bool track=d->row_dirty!=NULL;
+    if(changed&&track)memset(d->row_dirty,1,d->v.yres);
     for(unsigned y=0;y<height;y++){
         const uint8_t *src=(const uint8_t*)pixels+y*row;
         uint8_t *dst=d->pending+y*d->pending_stride;
-        if(!d->frames||memcmp(dst,src,d->pending_stride)){memcpy(dst,src,d->pending_stride);changed=true;}
+        if(!d->frames||memcmp(dst,src,d->pending_stride)){
+            memcpy(dst,src,d->pending_stride);
+            changed=true;
+            if(track)d->row_dirty[y]=1;
+        }
     }
-    if(d->use_light_overlay&&light_panel_compose(d->pending,d->pending_stride,d->v.xres,d->v.yres))changed=true;
+    if(d->use_light_overlay&&light_panel_compose(d->pending,d->pending_stride,d->v.xres,d->v.yres)){
+        changed=true;
+        if(track)memset(d->row_dirty,1,d->v.yres);
+    }
     if(changed){uint64_t now=monotonic_ns();if(!d->dirty)d->first_dirty=now;d->dirty=true;d->last_present=now;
         if(d->turn_options.trace&&d->page_turn_direction){if(!d->turn_first_frame_ns)d->turn_first_frame_ns=arrived;d->turn_last_frame_ns=arrived;}}
     d->frames++;
     if(d->frames==1){d->full=true;fprintf(stderr,"[display] FIRST_FRAME_RECEIVED\n");}
+    if(changed&&d->worker_started)pthread_cond_signal(&d->worker_cond);
     pthread_mutex_unlock(&d->lock);return true;
 }
 static uint32_t field(unsigned c,struct fb_bitfield f){return f.length?((c>>(8-f.length))<<f.offset):0;}
-void display_full(Display *d){pthread_mutex_lock(&d->lock);if(!d->dirty)d->first_dirty=monotonic_ns();d->full=true;d->dirty=true;pthread_mutex_unlock(&d->lock);}
+void display_mark_dirty_locked(Display *d){
+    if(d->row_dirty)memset(d->row_dirty,1,d->v.yres);
+    if(!d->dirty)d->first_dirty=monotonic_ns();
+    d->dirty=true;d->last_present=monotonic_ns();
+    if(d->worker_started)pthread_cond_signal(&d->worker_cond);
+}
+void display_full(Display *d){
+    pthread_mutex_lock(&d->lock);
+    if(!d->dirty)d->first_dirty=monotonic_ns();
+    if(d->row_dirty)memset(d->row_dirty,1,d->v.yres);
+    d->full=true;d->dirty=true;
+    if(d->worker_started)pthread_cond_signal(&d->worker_cond);
+    pthread_mutex_unlock(&d->lock);
+}
 void display_request_full(Display *d,unsigned delay_ms){
     uint64_t due=monotonic_ns()+(uint64_t)delay_ms*1000000ULL;
     pthread_mutex_lock(&d->lock);
     if(!d->request_clean_at||due<d->request_clean_at)d->request_clean_at=due;
+    if(d->worker_started)pthread_cond_signal(&d->worker_cond);
     pthread_mutex_unlock(&d->lock);
 }
 bool display_arm_page_turn(Display *d,bool forward,bool vertical,unsigned steps){
     pthread_mutex_lock(&d->lock);
     bool ready=d->mem&&d->committed_valid&&steps>=2&&steps<=REFRESH_BANDS_MAX;
     if(ready){d->page_turn_direction=forward?1:-1;d->page_turn_vertical=vertical;d->page_turn_steps=steps;d->page_turn_until=monotonic_ns()+2500000000ULL;
+        d->page_turn_seq++;
         atomic_store(&d->turn_cancel,false);
-        if(d->turn_options.trace){d->turn_input_ns=d->last_input_ns;d->turn_arm_ns=monotonic_ns();d->turn_first_frame_ns=d->turn_last_frame_ns=0;}}
+        if(d->turn_options.trace){d->turn_input_ns=d->last_input_ns;d->turn_arm_ns=monotonic_ns();d->turn_first_frame_ns=d->turn_last_frame_ns=0;}
+        if(d->worker_started)pthread_cond_signal(&d->worker_cond);}
     pthread_mutex_unlock(&d->lock);return ready;
 }
 void display_cancel_page_turn(Display *d){atomic_store(&d->turn_cancel,true);}
@@ -175,7 +203,8 @@ static int submit_sequence(Display *d,struct update *updates,unsigned n,struct u
 /* Color pages and explicit cleans never use the animation sweep. */
 static int page_turn_bands(Display *d,bool forward,bool night,struct update *last,TurnTrace *trace){
     bool timed=d->turn_options.profile==TURN_TIMED;
-    bool reagl=d->evidence_options.reagl_bands;
+    bool measured_geom=d->v.xres==1072&&d->v.yres==1448&&d->v.rotate==3;
+    bool reagl=d->evidence_options.reagl_bands&&measured_geom;
     unsigned steps=timed?d->turn_options.bands:d->page_turn_steps;
     struct update updates[REFRESH_BANDS_MAX];unsigned positions[REFRESH_BANDS_MAX];
     for(unsigned i=0;i<steps;i++){
@@ -210,43 +239,81 @@ static int night_color_parts(Display *d,const RefreshPart *parts,unsigned n,stru
     fprintf(stderr,"[night-color] regions=%u cfa_rows=%u/%u\n",n,color_rows,d->v.yres);
     return 1;
 }
-static uint64_t deadline_locked(Display *d){
+typedef struct {
+    uint64_t start_ns,page_turn_until,page_turn_seq;
+    uint64_t turn_input_ns,turn_arm_ns,turn_first_frame_ns,turn_last_frame_ns;
+    int page_turn_direction;
+    unsigned page_turn_steps;
+    bool full,page_turn_vertical,trace_enabled;
+    char mode[32];
+} FlushJob;
+static uint64_t deadline_locked(Display *d,uint64_t now){
     if(!d->frames)return UINT64_MAX;
+    bool turn=d->page_turn_direction&&now<=d->page_turn_until;
     uint64_t interval=!strcmp(d->mode,"fast")?80000000ULL:140000000ULL;
-    uint64_t settled=d->last_present+40000000ULL,limit=d->first_dirty+400000000ULL;
+    uint64_t settle_ns=turn?16000000ULL:40000000ULL;
+    uint64_t settled=d->last_present+settle_ns,limit=d->first_dirty+400000000ULL;
     if(settled>limit)settled=limit;
     uint64_t allowed=d->last_refresh+interval;
     uint64_t pixels_due=d->dirty?(allowed>settled?allowed:settled):UINT64_MAX;
-    return refresh_deadline(pixels_due,d->request_clean_at,allowed,monotonic_ns());
+    return refresh_deadline(pixels_due,d->request_clean_at,allowed,now);
 }
-uint64_t display_deadline(Display *d){pthread_mutex_lock(&d->lock);uint64_t t=deadline_locked(d);pthread_mutex_unlock(&d->lock);return t;}
-static void flush(Display *d,const uint8_t *cover){
-    uint64_t now=monotonic_ns();pthread_mutex_lock(&d->lock);
-    if(!cover&&now<deadline_locked(d)){pthread_mutex_unlock(&d->lock);return;}
-    if(!cover&&d->request_clean_at&&now>=d->request_clean_at){
-        d->request_clean_at=0;
-        bool same=d->committed_valid&&!memcmp(d->pending,d->committed,d->pending_stride*d->v.yres);
-        if(!d->full&&refresh_duplicate_clean(now,d->last_clean,same)){
-            fprintf(stderr,"[refresh] coalesced duplicate cleanup for unchanged pixels\n");
-        }else{
-            if(!d->dirty)d->first_dirty=now;
-            d->full=true;d->dirty=true;
+uint64_t display_deadline(Display *d){pthread_mutex_lock(&d->lock);uint64_t t=deadline_locked(d,monotonic_ns());pthread_mutex_unlock(&d->lock);return t;}
+static void copy_to_fb(Display *d,const uint8_t *source,RefreshRegion r,bool hw_invert,bool skip_unchanged){
+    unsigned left=r.left,top=r.top,endy=top+r.height;
+    uint32_t alpha=field(255,d->v.transp);
+    bool native_rgb=d->v.red.length==8&&d->v.green.length==8&&d->v.blue.length==8&&
+        d->v.red.offset==0&&d->v.green.offset==8&&d->v.blue.offset==16;
+    size_t row_bytes=(size_t)r.width*4;
+    if(native_rgb&&!hw_invert){
+        for(unsigned y=top;y<endy;y++){
+            const uint8_t *src=source+(size_t)y*d->pending_stride+(size_t)left*4;
+            if(skip_unchanged&&!memcmp(d->committed+(size_t)y*d->pending_stride+(size_t)left*4,src,row_bytes))continue;
+            uint32_t *dst=(uint32_t*)(d->mem+(size_t)(y+d->v.yoffset)*d->f.line_length+(size_t)(d->v.xoffset+left)*4);
+            for(unsigned x=0;x<r.width;x++){
+                const uint8_t *p=src+x*4;
+                dst[x]=((uint32_t)p[0]<<16)|((uint32_t)p[1]<<8)|(uint32_t)p[2]|alpha;
+            }
+        }
+    }else if(native_rgb&&hw_invert){
+        for(unsigned y=top;y<endy;y++){
+            const uint8_t *src=source+(size_t)y*d->pending_stride+(size_t)left*4;
+            if(skip_unchanged&&!memcmp(d->committed+(size_t)y*d->pending_stride+(size_t)left*4,src,row_bytes))continue;
+            uint32_t *dst=(uint32_t*)(d->mem+(size_t)(y+d->v.yoffset)*d->f.line_length+(size_t)(d->v.xoffset+left)*4);
+            for(unsigned x=0;x<r.width;x++){
+                const uint8_t *p=src+x*4;
+                dst[x]=((uint32_t)(255u-p[0])<<16)|((uint32_t)(255u-p[1])<<8)|(uint32_t)(255u-p[2])|alpha;
+            }
+        }
+    }else{
+        for(unsigned y=top;y<endy;y++){
+            const uint8_t *src=source+(size_t)y*d->pending_stride+(size_t)left*4;
+            if(skip_unchanged&&!memcmp(d->committed+(size_t)y*d->pending_stride+(size_t)left*4,src,row_bytes))continue;
+            uint32_t *dst=(uint32_t*)(d->mem+(size_t)(y+d->v.yoffset)*d->f.line_length+(size_t)(d->v.xoffset+left)*4);
+            for(unsigned x=0;x<r.width;x++){
+                const uint8_t *p=src+x*4;
+                unsigned b=p[0],g=p[1],rc=p[2];
+                if(hw_invert){b=255-b;g=255-g;rc=255-rc;}
+                dst[x]=field(rc,d->v.red)|field(g,d->v.green)|field(b,d->v.blue)|alpha;
+            }
         }
     }
-    if(!cover&&!d->dirty){pthread_mutex_unlock(&d->lock);return;}
-    const uint8_t *source=cover?cover:d->pending;
+}
+static bool execute_flush(Display *d,const uint8_t *source,const FlushJob *job,bool cover,bool *consumed_turn){
+    *consumed_turn=false;
+    uint64_t now=job->start_ns;
     RefreshPlan plan;
     if(!refresh_plan(d->committed_valid?d->committed:NULL,source,d->pending_stride,
-                     d->v.xres,d->v.yres,cover||d->full,d->mode,&plan)){
-        d->dirty=false;pthread_mutex_unlock(&d->lock);return;
+                     d->v.xres,d->v.yres,cover||job->full,job->mode,&plan)){
+        return true;
     }
     TurnTrace storage,*trace=NULL;
-    if(d->turn_options.trace){
+    if(job->trace_enabled){
         turn_trace_init(&storage,true,++d->trace_serial);trace=&storage;
         trace->options=d->turn_options;
         trace->flush=now;
-        if(d->page_turn_direction&&now<=d->page_turn_until){
-            trace->input=d->turn_input_ns;trace->arm=d->turn_arm_ns;trace->first_frame=d->turn_first_frame_ns;trace->last_frame=d->turn_last_frame_ns;
+        if(job->page_turn_direction&&now<=job->page_turn_until){
+            trace->input=job->turn_input_ns;trace->arm=job->turn_arm_ns;trace->first_frame=job->turn_first_frame_ns;trace->last_frame=job->turn_last_frame_ns;
         }
     }
     if(cover)plan.hw_invert=false;
@@ -263,7 +330,7 @@ static void flush(Display *d,const uint8_t *cover){
         /* Every pixel's physical encoding changes with this GLOBAL flag. */
         bool clean=plan.clean,target_inverted=plan.hw_invert;
         refresh_plan(d->committed_valid?d->committed:NULL,source,d->pending_stride,
-                     d->v.xres,d->v.yres,true,d->mode,&plan);
+                     d->v.xres,d->v.yres,true,job->mode,&plan);
         /* Re-encode all pixels without inventing a flashing cleanup. In
          * particular, one colored word entering/leaving a dark page must
          * retain GLRC16 instead of being promoted to a GCC16 white flash. */
@@ -278,7 +345,7 @@ static void flush(Display *d,const uint8_t *cover){
         part_count=refresh_night_parts(d->committed_valid?d->committed:NULL,source,
                                      d->pending_stride,d->v.xres,d->v.yres,parts);
     bool measured_geom=d->v.xres==1072&&d->v.yres==1448&&d->v.rotate==3;
-    bool semantic_turn=!cover&&d->page_turn_direction&&now<=d->page_turn_until&&plan.major;
+    bool semantic_turn=!cover&&job->page_turn_direction&&now<=job->page_turn_until&&plan.major;
     bool smooth_color=plan.color&&measured_geom&&d->color_profile==COLOR_REFRESH_SMOOTH;
     uint32_t single_mode=1;
     if(smooth_color){
@@ -302,60 +369,39 @@ static void flush(Display *d,const uint8_t *cover){
     bool animate=semantic_turn&&!plan.clean&&!plan.color&&!plan.frame_color&&!inversion_change&&d->v.xres>=160;
     if(d->turn_options.profile==TURN_OFF)animate=false;
     if(d->turn_options.profile==TURN_TIMED&&!measured_geom)animate=false;
-    if(d->evidence_options.reagl_bands&&!measured_geom)animate=false;
-    bool forward=d->page_turn_direction>0;
-    if(cover||plan.major||plan.clean||now>d->page_turn_until)d->page_turn_direction=0;
+    bool forward=job->page_turn_direction>0;
+    if(cover||plan.major||plan.clean||now>job->page_turn_until)*consumed_turn=true;
     if(animate||part_count)plan.region=(RefreshRegion){0,0,d->v.xres,d->v.yres};
     if(trace)trace->planned=monotonic_ns();
     /* Wake before either wait or submit, as in KOReader's MTK path. */
-    if(display_command("fiti_power 1")){perror("display wake");app_quit=1;turn_trace_dump(trace,"wake-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return;}
-    if(display_wait_traced(d,trace)<0){fprintf(stderr,"[display] wait for prior update failed: %s\n",strerror(errno));app_quit=1;turn_trace_dump(trace,"prior-wait-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return;}
-    if(inversion_change&&display_inversion(d,plan.hw_invert)){perror("display inversion");app_quit=1;turn_trace_dump(trace,"invert-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return;}
+    if(display_command("fiti_power 1")){perror("display wake");app_quit=1;turn_trace_dump(trace,"wake-error",monotonic_ns());return true;}
+    if(display_wait_traced(d,trace)<0){fprintf(stderr,"[display] wait for prior update failed: %s\n",strerror(errno));app_quit=1;turn_trace_dump(trace,"prior-wait-error",monotonic_ns());return true;}
+    if(inversion_change&&display_inversion(d,plan.hw_invert)){perror("display inversion");app_quit=1;turn_trace_dump(trace,"invert-error",monotonic_ns());return true;}
     FrameCapture capture={.fd=-1};unsigned quality_status=0;
     if(semantic_turn){
         FrameEvidenceInfo info={.width=d->v.xres,.height=d->v.yres,.logical_stride=d->pending_stride,
             .rotation=d->v.rotate,.fb_stride=d->f.line_length,.xoffset=d->v.xoffset,.yoffset=d->v.yoffset,
             .red=d->v.red,.green=d->v.green,.blue=d->v.blue,.alpha=d->v.transp,.plan=plan,
             .old_valid=d->committed_valid,.animated=animate,.trace_id=trace?trace->id:0,
-            .band_path=d->evidence_options.reagl_bands?"reagl":"stable",
+            .band_path=(d->evidence_options.reagl_bands&&measured_geom)?"reagl":"stable",
             .profile=d->turn_options.profile==TURN_OFF?"off":d->turn_options.profile==TURN_TIMED?"timed":"stable"};
         capture=frame_capture_begin(&d->evidence_options,&info,d->committed,source,d->mem,d->length);
     }
-    unsigned endx=plan.region.left+plan.region.width,endy=plan.region.top+plan.region.height;
-    uint32_t alpha=field(255,d->v.transp);
-    bool native_rgb=d->v.red.length==8&&d->v.green.length==8&&d->v.blue.length==8&&
-        d->v.red.offset==0&&d->v.green.offset==8&&d->v.blue.offset==16;
+    bool skip_unchanged=!cover&&!plan.clean&&!inversion_change&&d->committed_valid;
     if(trace)trace->copy_begin=monotonic_ns();
-    for(unsigned y=plan.region.top;y<endy;y++){
-        uint32_t *dst=(uint32_t*)(d->mem+(y+d->v.yoffset)*d->f.line_length+d->v.xoffset*4);
-        const uint8_t *src=source+y*d->pending_stride;
-        for(unsigned x=plan.region.left;x<endx;x++){
-            const uint8_t *p=src+x*4;
-            unsigned b=p[0],g=p[1],r=p[2];
-            /* Dart already rendered the dark theme. Give the driver's
-             * inversion the complementary grayscale input, keeping the
-             * logical committed image unchanged. Real-color frames remain
-             * in the direct CFA path: post-CFA inversion is not RGB inverse. */
-            if(plan.hw_invert){b=255-b;g=255-g;r=255-r;}
-            dst[x]=native_rgb?((uint32_t)b<<16)|((uint32_t)g<<8)|r|alpha:
-                field(r,d->v.red)|field(g,d->v.green)|field(b,d->v.blue)|alpha;
-        }
-    }
+    copy_to_fb(d,source,plan.region,plan.hw_invert,skip_unchanged);
     if(trace)trace->copied=monotonic_ns();
     frame_capture_pixels(&capture,"fb-converted.bin",d->mem,d->length);
+    bool ok=true;
     {
         /* REAGL and Kaleido both require UPDATE_MODE_FULL on this model;
          * that flag does not itself mean a full-screen flashing cleanup. */
         struct update u={0};
+        d->page_turn_vertical=job->page_turn_vertical;
+        d->page_turn_steps=job->page_turn_steps;
         int bands=animate?page_turn_bands(d,forward,plan.night,&u,trace):
                   part_count?night_color_parts(d,parts,part_count,&u,trace):0;
-        if(bands<0){frame_capture_end(&capture,"sequence-wait-error",d->last_accepted_marker,0);turn_trace_dump(trace,"sequence-wait-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return;}
-        /* Diagnostic comparison only, default OFF. Reuse the ordinary gray
-         * reading waveform/mode/flags after ALL strip markers have completed.
-         * No forced GC16, no pixel changes, no claimed optical improvement.
-         * Restrict to measured geometry; color, clean and fallback sequences
-         * never acquire an extra update. quality_status: 0=off/skipped,
-         * 1=completed, 2=send rejected, 3=completion failed. */
+        if(bands<0){frame_capture_end(&capture,"sequence-wait-error",d->last_accepted_marker,0);turn_trace_dump(trace,"sequence-wait-error",monotonic_ns());return true;}
         if(bands==1&&animate&&d->evidence_options.quality_after_turn&&
            d->v.xres==1072&&d->v.yres==1448&&d->v.rotate==3){
             struct update q={.region={0,0,d->v.xres,d->v.yres},
@@ -364,44 +410,174 @@ static void flush(Display *d,const uint8_t *cover){
             else{
                 if(wait_marker(d,&q,true,trace)<0){
                     app_quit=1;frame_capture_end(&capture,"quality-wait-error",q.marker,3);
-                    turn_trace_dump(trace,"quality-wait-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return;
+                    turn_trace_dump(trace,"quality-wait-error",monotonic_ns());return true;
                 }
                 d->completed_marker=q.marker;d->quality_refreshes++;quality_status=1;u=q;
                 fprintf(stderr,"[text-quality] completed ordinary whole-page comparison wave=%u mode=1 flags=0 marker=%u\n",q.waveform,q.marker);
             }
         }
         if(!bands)u=(struct update){.region={plan.region.top,plan.region.left,plan.region.width,plan.region.height},.waveform=plan.waveform,.mode=single_mode,.marker=next_marker(d),.flags=plan.flags};
-        if(!bands&&send_update(d,&u,trace)<0){fprintf(stderr,"[display] HWTCON_SEND_UPDATE failed: %s\n",strerror(errno));d->full=true;d->failures++;if(d->failures>=3)app_quit=1;}
+        if(!bands&&send_update(d,&u,trace)<0){fprintf(stderr,"[display] HWTCON_SEND_UPDATE failed: %s\n",strerror(errno));d->failures++;if(d->failures>=3)app_quit=1;ok=false;}
         else {
-            /* Never call an unconfirmed target the committed image. This
-             * error-path fix leaves successful profile timings/waves intact. */
             if(!bands){
-                if(wait_marker(d,&u,true,trace)<0){app_quit=1;frame_capture_end(&capture,"complete-error",u.marker,quality_status);turn_trace_dump(trace,"complete-error",monotonic_ns());pthread_mutex_unlock(&d->lock);return;}
+                if(wait_marker(d,&u,true,trace)<0){app_quit=1;frame_capture_end(&capture,"complete-error",u.marker,quality_status);turn_trace_dump(trace,"complete-error",monotonic_ns());return true;}
                 d->completed_marker=u.marker;
             }
-            for(unsigned y=plan.region.top;y<endy;y++)memcpy(
-                d->committed+y*d->pending_stride+plan.region.left*4,
-                source+y*d->pending_stride+plan.region.left*4,plan.region.width*4);
+            unsigned endy=plan.region.top+plan.region.height;
+            size_t row_bytes=(size_t)plan.region.width*4;
+            for(unsigned y=plan.region.top;y<endy;y++){
+                const uint8_t *src_row=source+(size_t)y*d->pending_stride+(size_t)plan.region.left*4;
+                uint8_t *dst_row=d->committed+(size_t)y*d->pending_stride+(size_t)plan.region.left*4;
+                if(!skip_unchanged||memcmp(dst_row,src_row,row_bytes))memcpy(dst_row,src_row,row_bytes);
+            }
             d->committed_valid=true;
-            d->full=false;d->failures=0;d->refreshes++;
+            d->failures=0;d->refreshes++;
             if(plan.clean){d->last_clean=monotonic_ns();d->clean_refreshes++;}
             if(plan.night&&!plan.color)d->night_refreshes++;
             if(plan.color)d->color_refreshes++;else d->gray_refreshes++;
-            if(cover)d->request_clean_at=0;
-            /* FULL REAGL/CFA transactions are completed before another
-             * framebuffer or global inversion change, matching KOReader. */
             if(display_wait_traced(d,trace)<0){fprintf(stderr,"[display] wait for completion failed: %s\n",strerror(errno));app_quit=1;}
             if(d->refreshes==1)fprintf(stderr,"[display] FIRST_UPDATE_SUBMITTED marker=%u\n",u.marker);
             if(d->refreshes<=30||plan.clean||d->last_waveform!=u.waveform)fprintf(stderr,"[refresh] marker=%u wave=%u clean=%u color=%u night=%u hw_invert=%u flags=0x%x dither=%d transition=%u region=%u,%u %ux%u changed=%u work_ms=%.1f\n",
                 u.marker,u.waveform,plan.clean,plan.color,plan.night,plan.hw_invert,u.flags,u.dither,plan.polarity_changed,plan.region.left,plan.region.top,plan.region.width,plan.region.height,plan.changed,(monotonic_ns()-now)/1000000.0);
             d->last_waveform=u.waveform;
         }
-        d->last_refresh=monotonic_ns();
     }
     frame_capture_pixels(&capture,"fb-complete.bin",d->mem,d->length);
-    frame_capture_end(&capture,app_quit?"quit-or-error":d->failures?"send-error":"complete",d->last_accepted_marker,quality_status);
-    turn_trace_dump(trace,app_quit?"quit-or-error":d->failures?"send-error":"complete",monotonic_ns());
-    d->dirty=d->failures>0;pthread_mutex_unlock(&d->lock);
+    frame_capture_end(&capture,app_quit?"quit-or-error":!ok?"send-error":"complete",d->last_accepted_marker,quality_status);
+    turn_trace_dump(trace,app_quit?"quit-or-error":!ok?"send-error":"complete",monotonic_ns());
+    return ok;
+}
+static void build_job_locked(Display *d,uint64_t now,bool cover,FlushJob *job){
+    job->start_ns=now;
+    job->full=cover||d->full;
+    job->page_turn_direction=d->page_turn_direction;
+    job->page_turn_until=d->page_turn_until;
+    job->page_turn_vertical=d->page_turn_vertical;
+    job->page_turn_steps=d->page_turn_steps;
+    job->page_turn_seq=d->page_turn_seq;
+    job->trace_enabled=d->turn_options.trace;
+    job->turn_input_ns=d->turn_input_ns;
+    job->turn_arm_ns=d->turn_arm_ns;
+    job->turn_first_frame_ns=d->turn_first_frame_ns;
+    job->turn_last_frame_ns=d->turn_last_frame_ns;
+    snprintf(job->mode,sizeof(job->mode),"%s",d->mode);
+}
+static void flush(Display *d,const uint8_t *cover){
+    uint64_t now=monotonic_ns();pthread_mutex_lock(&d->lock);
+    if(!cover&&now<deadline_locked(d,now)){pthread_mutex_unlock(&d->lock);return;}
+    if(!cover&&d->request_clean_at&&now>=d->request_clean_at){
+        d->request_clean_at=0;
+        bool same=d->committed_valid&&!memcmp(d->pending,d->committed,d->pending_stride*d->v.yres);
+        if(!d->full&&refresh_duplicate_clean(now,d->last_clean,same)){
+            fprintf(stderr,"[refresh] coalesced duplicate cleanup for unchanged pixels\n");
+        }else{
+            if(!d->dirty)d->first_dirty=now;
+            d->full=true;d->dirty=true;
+        }
+    }
+    if(!cover&&!d->dirty){pthread_mutex_unlock(&d->lock);return;}
+    FlushJob job;build_job_locked(d,now,cover!=NULL,&job);
+    const uint8_t *source=cover?cover:d->pending;
+    bool consumed_turn=false;
+    bool ok=execute_flush(d,source,&job,cover!=NULL,&consumed_turn);
+    if(consumed_turn)d->page_turn_direction=0;
+    if(cover){if(ok)d->request_clean_at=0;}
+    else{
+        d->last_refresh=now;
+        if(!ok){d->full=true;d->dirty=true;}
+        else{d->full=false;d->dirty=false;}
+    }
+    pthread_mutex_unlock(&d->lock);
+}
+static void *display_worker_main(void *u){
+    Display *d=u;
+    pthread_mutex_lock(&d->lock);
+    while(!d->worker_stop){
+        if(d->worker_paused){pthread_cond_wait(&d->worker_cond,&d->lock);continue;}
+        uint64_t now=monotonic_ns();
+        uint64_t due=deadline_locked(d,now);
+        if(due==UINT64_MAX){pthread_cond_wait(&d->worker_cond,&d->lock);continue;}
+        if(now<due){
+            struct timespec ts;
+#if defined(__linux__)
+            ts.tv_sec=(time_t)(due/1000000000ULL);
+            ts.tv_nsec=(long)(due%1000000000ULL);
+#else
+            struct timespec rt;clock_gettime(CLOCK_REALTIME,&rt);
+            uint64_t delta=due-now;
+            uint64_t nsec=(uint64_t)rt.tv_nsec+(delta%1000000000ULL);
+            ts.tv_sec=rt.tv_sec+(time_t)(delta/1000000000ULL)+(time_t)(nsec/1000000000ULL);
+            ts.tv_nsec=(long)(nsec%1000000000ULL);
+#endif
+            pthread_cond_timedwait(&d->worker_cond,&d->lock,&ts);
+            continue;
+        }
+        if(d->request_clean_at&&now>=d->request_clean_at){
+            d->request_clean_at=0;
+            bool same=d->committed_valid&&!memcmp(d->pending,d->committed,d->pending_stride*d->v.yres);
+            if(!d->full&&refresh_duplicate_clean(now,d->last_clean,same)){
+                fprintf(stderr,"[refresh] coalesced duplicate cleanup for unchanged pixels\n");
+            }else{
+                if(!d->dirty)d->first_dirty=now;
+                d->full=true;d->dirty=true;
+            }
+        }
+        if(!d->dirty)continue;
+        if(!d->staging_valid){
+            memcpy(d->staging,d->pending,d->pending_stride*d->v.yres);
+            d->staging_valid=true;
+        }else{
+            for(unsigned y=0;y<d->v.yres;y++)if(d->row_dirty[y])
+                memcpy(d->staging+(size_t)y*d->pending_stride,d->pending+(size_t)y*d->pending_stride,d->pending_stride);
+        }
+        memset(d->row_dirty,0,d->v.yres);
+        FlushJob job;build_job_locked(d,now,false,&job);
+        d->dirty=false;d->full=false;d->worker_busy=true;
+        pthread_mutex_unlock(&d->lock);
+        bool consumed_turn=false;
+        bool ok=execute_flush(d,d->staging,&job,false,&consumed_turn);
+        pthread_mutex_lock(&d->lock);
+        d->last_refresh=job.start_ns;
+        if(consumed_turn&&d->page_turn_seq==job.page_turn_seq)d->page_turn_direction=0;
+        if(!ok){d->full=true;d->dirty=true;if(d->row_dirty)memset(d->row_dirty,1,d->v.yres);}
+        if(app_quit&&d->wake_cb)d->wake_cb();
+        d->worker_busy=false;
+        pthread_cond_broadcast(&d->idle_cond);
+    }
+    pthread_mutex_unlock(&d->lock);
+    return NULL;
+}
+bool display_start_worker(Display *d,void (*wake_cb)(void)){
+    const char *env=getenv("REEDEN_ASYNC_DISPLAY");
+    if(env&&!strcmp(env,"0")){fprintf(stderr,"[display] async worker disabled (sync mode)\n");return false;}
+    if(d->worker_started)return true;
+    d->staging=malloc(d->pending_stride*d->v.yres);
+    d->row_dirty=calloc(d->v.yres,1);
+    if(!d->staging||!d->row_dirty){free(d->staging);free(d->row_dirty);d->staging=NULL;d->row_dirty=NULL;return false;}
+    pthread_condattr_t cattr;pthread_condattr_init(&cattr);
+#if defined(__linux__)
+    pthread_condattr_setclock(&cattr,CLOCK_MONOTONIC);
+#endif
+    int r1=pthread_cond_init(&d->worker_cond,&cattr),r2=pthread_cond_init(&d->idle_cond,NULL);
+    pthread_condattr_destroy(&cattr);
+    if(r1||r2){if(!r1)pthread_cond_destroy(&d->worker_cond);if(!r2)pthread_cond_destroy(&d->idle_cond);free(d->staging);free(d->row_dirty);d->staging=NULL;d->row_dirty=NULL;return false;}
+    d->worker_cond_init=true;d->wake_cb=wake_cb;d->staging_valid=false;
+    if(pthread_create(&d->worker,NULL,display_worker_main,d)){
+        pthread_cond_destroy(&d->worker_cond);pthread_cond_destroy(&d->idle_cond);
+        d->worker_cond_init=false;free(d->staging);free(d->row_dirty);d->staging=NULL;d->row_dirty=NULL;return false;
+    }
+    d->worker_started=true;
+    fprintf(stderr,"[display] async worker started\n");
+    return true;
+}
+bool display_worker_active(const Display *d){return d->worker_started;}
+void display_pause(Display *d,bool paused){
+    if(!d->worker_started)return;
+    pthread_mutex_lock(&d->lock);
+    d->worker_paused=paused;
+    pthread_cond_broadcast(&d->worker_cond);
+    while(paused&&d->worker_busy)pthread_cond_wait(&d->idle_cond,&d->lock);
+    pthread_mutex_unlock(&d->lock);
 }
 void display_flush(Display *d){flush(d,NULL);}
 static int display_wait_traced(Display *d,TurnTrace *trace){
@@ -418,7 +594,16 @@ static int display_wait_traced(Display *d,TurnTrace *trace){
     if(result>=0)d->completed_marker=u.marker;
     return result;
 }
-int display_wait(Display *d){return display_wait_traced(d,NULL);}
+int display_wait(Display *d){
+    if(d->worker_started){
+        pthread_mutex_lock(&d->lock);
+        while(d->worker_busy)pthread_cond_wait(&d->idle_cond,&d->lock);
+        int r=display_wait_traced(d,NULL);
+        pthread_mutex_unlock(&d->lock);
+        return r;
+    }
+    return display_wait_traced(d,NULL);
+}
 int display_cover(Display *d,const char *path,unsigned width,unsigned height,unsigned channels){
     if(!width||!height||width>4096||height>4096||channels<1||channels>4){errno=EINVAL;return -1;}
     FILE *f=fopen(path,"rb");if(!f)return -1;
@@ -427,6 +612,15 @@ int display_cover(Display *d,const char *path,unsigned width,unsigned height,uns
     if(!raw||!bgra){free(raw);free(bgra);fclose(f);errno=ENOMEM;return -1;}
     bool valid=fread(raw,1,total,f)==total&&fgetc(f)==EOF;fclose(f);
     if(!valid){free(raw);free(bgra);errno=EINVAL;return -1;}
+    bool was_paused=false;
+    if(d->worker_started){
+        pthread_mutex_lock(&d->lock);
+        was_paused=d->worker_paused;
+        d->worker_paused=true;
+        pthread_cond_broadcast(&d->worker_cond);
+        while(d->worker_busy)pthread_cond_wait(&d->idle_cond,&d->lock);
+        pthread_mutex_unlock(&d->lock);
+    }
     if((channels==2||channels==4)&&d->committed_valid&&d->committed)
         memcpy(bgra,d->committed,d->pending_stride*d->v.yres);
     else memset(bgra,255,d->pending_stride*d->v.yres);
@@ -449,6 +643,27 @@ int display_cover(Display *d,const char *path,unsigned width,unsigned height,uns
             p[3]=255;
         }
     }
-    flush(d,bgra);int result=display_wait(d);free(raw);free(bgra);return result;
+    flush(d,bgra);int result=display_wait_traced(d,NULL);
+    if(d->worker_started&&!was_paused)display_pause(d,false);
+    free(raw);free(bgra);return result;
 }
-void display_close(Display *d){if(d->mem&&d->hw_state_known){display_wait(d);if(display_inversion(d,false))perror("reset display inversion");}if(d->mem)munmap(d->mem,d->length);if(d->fd>=0)close(d->fd);free(d->pending);free(d->committed);pthread_mutex_destroy(&d->lock);}
+void display_close(Display *d){
+    if(d->worker_started){
+        pthread_mutex_lock(&d->lock);
+        d->worker_stop=true;
+        pthread_cond_broadcast(&d->worker_cond);
+        pthread_mutex_unlock(&d->lock);
+        pthread_join(d->worker,NULL);
+        d->worker_started=false;
+    }
+    if(d->worker_cond_init){
+        pthread_cond_destroy(&d->worker_cond);
+        pthread_cond_destroy(&d->idle_cond);
+        d->worker_cond_init=false;
+    }
+    free(d->staging);d->staging=NULL;
+    free(d->row_dirty);d->row_dirty=NULL;
+    if(d->mem&&d->hw_state_known){display_wait(d);if(display_inversion(d,false))perror("reset display inversion");}
+    if(d->mem)munmap(d->mem,d->length);if(d->fd>=0)close(d->fd);
+    free(d->pending);free(d->committed);pthread_mutex_destroy(&d->lock);
+}

@@ -66,12 +66,17 @@ HOST=$!
 echo "$HOST $(token "$HOST")" > "$STATE/host"
 # Initialize the app while Nickel remains responsive. No framebuffer writes or
 # input grabs occur until the engine has delivered an actual frame in memory.
+if command -v usleep >/dev/null 2>&1; then
+    max_attempts=200; ready_wait() { usleep 100000; }
+else
+    max_attempts=20; ready_wait() { sleep 1; }
+fi
 attempt=0
 while [ ! -f "$STATE/ready" ]; do
     owned_host || break
     [ -d "$STATE/active" ] && [ ! -d "$STATE/recovering" ] || exit 19
-    if [ "$attempt" -ge 20 ]; then echo '[launcher] no first frame in 20s; Nickel was never paused'; exit 20; fi
-    sleep 1; attempt=$((attempt+1))
+    if [ "$attempt" -ge "$max_attempts" ]; then echo '[launcher] no first frame in 20s; Nickel was never paused'; exit 20; fi
+    ready_wait; attempt=$((attempt+1))
 done
 if [ -f "$STATE/ready" ]; then
     [ -d "$STATE/active" ] && [ ! -d "$STATE/recovering" ] && [ "$(cat "$STATE/owner" 2>/dev/null)" = "$$ $(token $$)" ] || exit 19

@@ -14,8 +14,8 @@ void touch_set_filter(bool (*filter)(FlutterPointerEvent *)){pointer_filter=filt
 static void send_pointer(FlutterEngine e,Contact *c,FlutterPointerPhase phase,unsigned w,unsigned h,Touch *t){
     double nx=(double)(c->x-t->min_x)/(t->max_x-t->min_x),ny=(double)(c->y-t->min_y)/(t->max_y-t->min_y);
     double x=(1.0-ny)*(w-1),y=nx*(h-1);
-    if(getenv("REEDEN_TOUCH_INVERT_X"))x=w-1-x;
-    if(getenv("REEDEN_TOUCH_INVERT_Y"))y=h-1-y;
+    if(t->invert_x)x=w-1-x;
+    if(t->invert_y)y=h-1-y;
     if(x<0)x=0;if(x>w-1)x=w-1;if(y<0)y=0;if(y>h-1)y=h-1;
     FlutterPointerEvent p={.struct_size=sizeof(p),.phase=phase,.timestamp=monotonic_ns()/1000,.x=x,.y=y,.device=c->id+1,.device_kind=kFlutterPointerDeviceKindTouch,.signal_kind=kFlutterPointerSignalKindNone};
     c->last_x=x;c->last_y=y;
@@ -32,6 +32,8 @@ int touch_open(Touch *t){
     t->slots=(caps[ABS_MT_SLOT/(8*sizeof(long))]>>(ABS_MT_SLOT%(8*sizeof(long))))&1;
     if(t->slots)ioctl(t->fd,EVIOCGABS(ABS_MT_SLOT),&slot);
     t->min_x=x.minimum;t->max_x=x.maximum;t->min_y=y.minimum;t->max_y=y.maximum;
+    t->invert_x=getenv("REEDEN_TOUCH_INVERT_X")!=NULL;
+    t->invert_y=getenv("REEDEN_TOUCH_INVERT_Y")!=NULL;
     for(int i=0;i<16;i++)t->contacts[i].id=-1;
     fprintf(stderr,"[touch] %s protocol=%s X=%d..%d Y=%d..%d transform=swap+mirrorX\n",p,t->slots?"B":"A",t->min_x,t->max_x,t->min_y,t->max_y);
     return 0;

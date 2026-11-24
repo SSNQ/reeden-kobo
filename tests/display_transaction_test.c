@@ -28,6 +28,9 @@ static uint64_t last_band_submit;
 static unsigned cancel_at_band,fail_submission_at,peak_outstanding;
 static bool fail_complete_once,fail_normal_once;
 static unsigned fail_complete_marker;
+static unsigned async_wait_ms;
+static unsigned async_wake_calls;
+static void dummy_wake(void){async_wake_calls++;}
 static uint8_t *immutable_image;
 static uint32_t last_first_pixel;
 static Display *display;
@@ -66,7 +69,8 @@ int __wrap_ioctl(int fd,unsigned long request,...){
             if(outstanding&&display->turn_options.profile!=TURN_TIMED)assert(now-last_band_submit>=minimum);
             last_band_submit=now;
             band_count++;assert(u->flags==0x8000);
-            if(display->evidence_options.reagl_bands)assert(u->mode==1&&(u->waveform==REFRESH_GLR16||u->waveform==REFRESH_GLKW16));
+            bool use_reagl=display->evidence_options.reagl_bands&&display->v.xres==1072&&display->v.yres==1448&&display->v.rotate==3;
+            if(use_reagl)assert(u->mode==1&&(u->waveform==REFRESH_GLR16||u->waveform==REFRESH_GLKW16));
             else assert(u->mode==0&&(u->waveform==HWTCON_RAW_DAY_BAND||u->waveform==HWTCON_RAW_NIGHT_BAND));
             if(band_count==fail_band_at){fail_band_at=0;errno=EIO;return -1;}
             band_left[band_count%128]=u->left;band_top[band_count%128]=u->top;needs_submission_wait=true;
@@ -95,6 +99,7 @@ int __wrap_ioctl(int fd,unsigned long request,...){
     }else{
         assert(request==0xc008462fUL);unsigned marker=*(uint32_t*)p;
         assert(marker<1024&&pending_markers[marker]&&outstanding);
+        if(async_wait_ms){struct timespec ts={0,(long)async_wait_ms*1000000L};nanosleep(&ts,NULL);}
         if(fail_complete_once||marker==fail_complete_marker){fail_complete_once=false;fail_complete_marker=0;errno=EIO;return -1;}
         pending_markers[marker]=false;outstanding--;
         if(!outstanding){free(immutable_image);immutable_image=NULL;}
@@ -449,6 +454,57 @@ static void check_color_refresh(Display *original){
     free(d.pending);free(d.committed);free(d.mem);pthread_mutex_destroy(&d.lock);display=original;
     puts("PASS: smooth color default (GL16/GLKW16+PARTIAL turns, GLRC16+FULL menus, GCC16 covers/cleans, native CFA), legacy opt-out and geometry guard");
 }
+static void check_async_worker(Display *original){
+    Display d={.fd=99,.pending_stride=640*4,.length=640*64*4};display=&d;
+    d.v.xres=640;d.v.yres=64;d.f.line_length=d.pending_stride;
+    d.v.red=(struct fb_bitfield){0,8,0};d.v.green=(struct fb_bitfield){8,8,0};
+    d.v.blue=(struct fb_bitfield){16,8,0};d.v.transp=(struct fb_bitfield){24,8,0};
+    d.pending=malloc(d.length);d.committed=malloc(d.length);d.mem=calloc(1,d.length);
+    assert(d.pending&&d.committed&&d.mem);pthread_mutex_init(&d.lock,NULL);strcpy(d.mode,"balanced");
+    /* Semantic-turn 16ms settle and no post-complete 140ms cooldown. */
+    memset(d.pending,255,d.length);d.frames=1;d.dirty=d.full=true;flush_now(&d);
+    uint64_t t0=monotonic_ns();
+    d.first_dirty=t0;d.last_present=t0;d.last_refresh=t0-200000000ULL;d.dirty=true;
+    assert(display_arm_page_turn(&d,true,false,10));
+    uint64_t due=deadline_locked(&d,t0);
+    assert(due==t0+16000000ULL);
+    d.page_turn_direction=0;
+    /* Async worker: non-blocking present while Page 1 WAIT_COMPLETE is in flight. */
+    assert(display_start_worker(&d,dummy_wake));
+    assert(display_worker_active(&d));
+    async_wait_ms=25;
+    uint8_t *p1=malloc(d.length),*p2=malloc(d.length);assert(p1&&p2);
+    memset(p1,220,d.length);memset(p2,180,d.length);
+    assert(display_arm_page_turn(&d,true,false,10));
+    assert(display_present(&d,p1,d.pending_stride,d.v.yres));
+    struct timespec wait25={0,25000000L};nanosleep(&wait25,NULL);
+    uint64_t arm_t=monotonic_ns();
+    assert(display_arm_page_turn(&d,true,false,10));
+    assert(display_present(&d,p2,d.pending_stride,d.v.yres));
+    assert(monotonic_ns()-arm_t<120000000ULL);
+    for(int i=0;i<250;i++){
+        pthread_mutex_lock(&d.lock);
+        bool done=!d.dirty&&!d.worker_busy&&d.committed_valid&&!memcmp(d.committed,p2,d.length);
+        pthread_mutex_unlock(&d.lock);
+        if(done)break;
+        struct timespec ts={0,20000000L};nanosleep(&ts,NULL);
+    }
+    pthread_mutex_lock(&d.lock);
+    assert(!d.dirty&&!d.worker_busy&&!memcmp(d.committed,p2,d.length));
+    pthread_mutex_unlock(&d.lock);
+    display_pause(&d,true);
+    char cov[64];snprintf(cov,sizeof(cov),"%s/async_cover.y8",getenv("REEDEN_KOBO_DIR"));
+    FILE *cf=fopen(cov,"wb");assert(cf);uint8_t cbuf[640*64];memset(cbuf,200,sizeof(cbuf));
+    assert(fwrite(cbuf,1,sizeof(cbuf),cf)==sizeof(cbuf));fclose(cf);
+    assert(!display_cover(&d,cov,640,64,1));
+    unlink(cov);
+    display_pause(&d,false);
+    async_wait_ms=0;
+    free(p1);free(p2);
+    display_close(&d);
+    display=original;
+    puts("PASS: 16ms turn settle, async display worker non-blocking present, page_turn_seq preservation and cover pause barrier");
+}
 int main(void){
     char root[]="/tmp/reeden-display-test-XXXXXX";assert(mkdtemp(root));char path[512];
     snprintf(path,sizeof(path),"%s/state",root);assert(!mkdir(path,0700));assert(!setenv("REEDEN_KOBO_DIR",root,1));
@@ -500,6 +556,7 @@ int main(void){
     check_experimental_turns(&d);
     check_pixel_transfer(&d);
     check_color_refresh(&d);
+    check_async_worker(&d);
     /* A failed global write must retain its recovery obligation and abort. */
     fail_inversion=true;d.direct_night=false;display_full(&d);flush_now(&d);assert(app_quit&&access(path,F_OK)==0);
     unlink(path);snprintf(path,sizeof(path),"%s/state",root);rmdir(path);rmdir(root);

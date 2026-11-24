@@ -25,10 +25,16 @@ typedef struct {
     unsigned quality_refreshes;
     atomic_bool turn_cancel;
     uint64_t trace_serial,last_input_ns,turn_input_ns,turn_arm_ns,turn_first_frame_ns,turn_last_frame_ns;
+    pthread_t worker;
+    pthread_cond_t worker_cond,idle_cond;
+    bool worker_cond_init,worker_started,worker_paused,worker_busy,worker_stop,staging_valid;
+    uint8_t *staging,*row_dirty;
+    uint64_t page_turn_seq;
+    void (*wake_cb)(void);
 } Display;
 typedef struct { int id,x,y; bool active,seen,down; double last_x,last_y; } Contact;
 typedef struct {
-    int fd,slot,id; bool slots,dropped; int max_x,max_y,min_x,min_y;
+    int fd,slot,id; bool slots,dropped,invert_x,invert_y; int max_x,max_y,min_x,min_y;
     Contact contacts[16], report[16], current; unsigned report_count;
 } Touch;
 int display_open(Display *);
@@ -41,6 +47,10 @@ bool display_arm_page_turn(Display *,bool,bool,unsigned);
 void display_cancel_page_turn(Display *);
 void display_note_input(Display *,uint64_t);
 uint64_t display_deadline(Display *);
+bool display_start_worker(Display *,void (*)(void));
+bool display_worker_active(const Display *);
+void display_pause(Display *,bool);
+void display_mark_dirty_locked(Display *);
 int display_cover(Display *,const char *,unsigned,unsigned,unsigned);
 int display_wait(Display *);
 void display_close(Display *);

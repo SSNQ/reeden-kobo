@@ -19,7 +19,20 @@ stop)
     while read -r pid start name; do
         if same_process "$pid" "$start"; then kill -TERM "$pid"; kill -CONT "$pid" 2>/dev/null || :; fi
     done < "$STATE/native-pids"
-    sleep 3
+    if command -v usleep >/dev/null 2>&1; then
+        term_limit=30; term_wait() { usleep 100000; }
+    else
+        term_limit=3; term_wait() { sleep 1; }
+    fi
+    attempt=0
+    while [ "$attempt" -lt "$term_limit" ]; do
+        remaining=false
+        while read -r pid start name; do
+            if same_process "$pid" "$start"; then remaining=true; break; fi
+        done < "$STATE/native-pids"
+        [ "$remaining" = true ] || break
+        term_wait; attempt=$((attempt+1))
+    done
     while read -r pid start name; do
         if same_process "$pid" "$start" && [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = "$name" ]; then kill -KILL "$pid" 2>/dev/null || :; fi
     done < "$STATE/native-pids"

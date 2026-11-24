@@ -20,7 +20,7 @@ case "$1:$2" in
     echo $((((10 - n) * 24 + 5) / 10))
     ;;
   com.lab126.powerd:battLevel)
-    cat /sys/class/power_supply/bd71827_bat/capacity
+    read -r n < /sys/class/power_supply/bd71827_bat/capacity && echo "$n"
     ;;
   com.lab126.powerd:isCharging)
     read -r s < /sys/class/power_supply/bd71827_bat/status

@@ -2,8 +2,23 @@
 # Sourced by launcher, guardian and recovery. PID start times avoid PID reuse.
 APP=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 STATE="$APP/state"
-token() { awk '{print $22}' "/proc/$1/stat" 2>/dev/null; }
-same_process() { [ -n "$1" ] && [ -n "$2" ] && [ "$(token "$1")" = "$2" ]; }
+token_into() {
+    _TOKEN=
+    [ -r "/proc/$1/stat" ] || return 1
+    IFS= read -r _stat_line < "/proc/$1/stat" 2>/dev/null || return 1
+    _stat_rest=${_stat_line##*) }
+    [ "$_stat_rest" != "$_stat_line" ] || return 1
+    case $- in *f*) _noglob=1;; *) _noglob=0;; esac
+    set -f
+    # shellcheck disable=SC2086
+    set -- $_stat_rest
+    [ "$_noglob" = 1 ] || set +f
+    [ "$#" -ge 20 ] || return 1
+    shift 19
+    _TOKEN=$1
+}
+token() { token_into "$1" && printf '%s\n' "$_TOKEN"; }
+same_process() { [ -n "$1" ] && [ -n "$2" ] && token_into "$1" && [ "$_TOKEN" = "$2" ]; }
 owned_host() {
     [ -f "$STATE/host" ] || return 1
     read -r HOST HOST_TOKEN < "$STATE/host"

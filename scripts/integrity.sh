@@ -18,6 +18,19 @@ fail() { printf '[INTEGRITY] %s\n' "$*" >&2; exit 1; }
 
 if [ "$MODE" = repair ]; then
     [ ! -d "$APP/state/active" ] || fail 'Exit Reeden before resource repair'
+    missing_resources=0
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] || continue
+        digest=${line%%  *}
+        rel=${line#*  }
+        [ "$rel" != "$line" ] && [ "${#digest}" -eq 64 ] || fail 'Invalid checksum manifest line'
+        case "$digest" in *[!0-9a-f]*) fail 'Invalid checksum digest';; esac
+        case "$rel" in core/data/*|ui-assets/*) :;; *) continue;; esac
+        case "$rel" in *'/../'*|*'/..'|*'/./'*|*'//'*) fail "Unsafe resource path: $rel";; esac
+        [ ! -L "$APP/$rel" ] || fail "Resource is a symlink: $rel"
+        [ -e "$APP/$rel" ] || { missing_resources=1; break; }
+    done < "$MANIFEST"
+    if [ "$missing_resources" = 1 ]; then
     # Validate the archive before opening any resource for writing. The archive
     # is private to this installed package, not downloaded during device startup.
     expected=$(awk '$2 == "integrity/resources.tar.gz" {print $1; n++} END {if (n != 1) exit 1}' "$MANIFEST") || fail 'Recovery archive has no unique checksum entry'
@@ -70,6 +83,7 @@ if [ "$MODE" = repair ]; then
         TMPFILE=
         printf '[RESTORED] %s\n' "$rel"
     done < "$MANIFEST"
+    fi
 fi
 
 # A historical install-verified marker is never a replacement for this check.

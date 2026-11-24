@@ -18,9 +18,10 @@ int main(void){
     unsetenv("REEDEN_FRAME_EVIDENCE_DIR");unsetenv("REEDEN_FRAME_EVIDENCE_LIMIT");unsetenv("REEDEN_TEXT_QUALITY_AFTER_TURN");
     unsetenv("REEDEN_TEXT_BAND_PATH");
     FrameEvidenceOptions options;assert(frame_evidence_options_load(&options));
-    assert(!options.directory[0]&&!options.quality_after_turn&&!options.reagl_bands&&options.limit==2);
+    assert(!options.directory[0]&&!options.quality_after_turn&&options.reagl_bands&&options.limit==2);
+    assert(!setenv("REEDEN_TEXT_BAND_PATH","stable",1));assert(frame_evidence_options_load(&options)&&!options.reagl_bands);
     assert(!setenv("REEDEN_TEXT_BAND_PATH","reagl",1));assert(frame_evidence_options_load(&options)&&options.reagl_bands);
-    assert(!setenv("REEDEN_TEXT_BAND_PATH","unknown",1));assert(!frame_evidence_options_load(&options)&&!options.reagl_bands);
+    assert(!setenv("REEDEN_TEXT_BAND_PATH","unknown",1));assert(!frame_evidence_options_load(&options)&&options.reagl_bands);
     unsetenv("REEDEN_TEXT_BAND_PATH");
     FrameEvidenceInfo info={.width=4,.height=4,.logical_stride=16,.fb_stride=24,
         .xoffset=1,.yoffset=1,.old_valid=true,.profile="stable",.animated=true,

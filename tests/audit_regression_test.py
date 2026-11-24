@@ -128,3 +128,40 @@ for line in lines:
         assert command.startswith('/mnt/onboard/.adds/reeden-kobo/')
 assert ':Reeden SSH:' not in menu and 'reeden-ssh.sh start' not in menu
 print('PASS: NickelMenu minimal launch entry, timeout limits and no default SSH start action')
+
+# Zero-fork session.sh token parsing with spaces and nested parens in comm,
+# plus fast early exit in native-session.sh stop (no unconditional 3s sleep).
+import time
+with tempfile.TemporaryDirectory(prefix='reeden-session-') as tmp:
+    app = Path(tmp)
+    (app / 'proc/123').mkdir(parents=True)
+    (app / 'proc/123/stat').write_text(
+        '123 (foo (bar) baz) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654 200\n'
+    )
+    sess = (ROOT / 'scripts/session.sh').read_text().replace('/proc/', str(app / 'proc') + '/')
+    (app / 'session.sh').write_text(sess)
+    r = subprocess.run(
+        ['sh', '-c', f'. "{app / "session.sh"}"; set -f; tok=$(token 123); same_process 123 987654 && printf "%s:%s" "$tok" "$-"'],
+        capture_output=True, text=True, check=True,
+    )
+    tok, flags = r.stdout.split(':', 1)
+    assert tok == '987654' and 'f' in flags, r.stdout
+
+    (app / 'state').mkdir()
+    (app / 'logs').mkdir()
+    (app / 'state/native-env').write_text('PLATFORM=kobo\n')
+    ns_src = (ROOT / 'scripts/native-session.sh').read_text()
+    ns_src = ns_src.replace('$(dirname -- "$0")/session.sh', str(app / 'ns_session.sh'))
+    (app / 'ns_session.sh').write_text(f'''APP="{app}"
+STATE="$APP/state"
+pidof() {{ [ "$1" = nickel ] && echo 555 || :; }}
+token() {{ echo 42; }}
+same_process() {{ [ ! -f "$APP/exited" ]; }}
+kill() {{ [ "$1" = -TERM ] && : > "$APP/exited"; return 0; }}
+''')
+    (app / 'native-session.sh').write_text(ns_src)
+    t0 = time.monotonic()
+    subprocess.run(['sh', str(app / 'native-session.sh'), 'stop'], check=True)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 1.5, f'native-session.sh stop took {elapsed:.2f}s (expected <1.5s)'
+print('PASS: zero-fork session.sh token parsing and fast native-session.sh stop')

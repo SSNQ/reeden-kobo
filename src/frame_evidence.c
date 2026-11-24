@@ -9,7 +9,7 @@
 
 extern uint64_t monotonic_ns(void);
 bool frame_evidence_options_load(FrameEvidenceOptions *out){
-    FrameEvidenceOptions o={.limit=2};
+    FrameEvidenceOptions o={.limit=2,.reagl_bands=true};
     const char *dir=getenv("REEDEN_FRAME_EVIDENCE_DIR");
     const char *limit=getenv("REEDEN_FRAME_EVIDENCE_LIMIT");
     const char *quality=getenv("REEDEN_TEXT_QUALITY_AFTER_TURN");
@@ -32,7 +32,7 @@ bool frame_evidence_options_load(FrameEvidenceOptions *out){
     }
     *out=o;return true;
 invalid:
-    memset(out,0,sizeof(*out));return false;
+    memset(out,0,sizeof(*out));out->reagl_bands=true;return false;
 }
 /* Exclusive files and a new per-transaction directory prevent overwrites and
  * reject terminal symlinks. Parent directory is explicitly chosen by operator. */

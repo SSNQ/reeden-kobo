@@ -56,7 +56,7 @@ for src in (ROOT/'docs').rglob('*'):
 for src in (P/'runtime').iterdir():src.chmod(0o755)
 for src in (P/'bin').iterdir():src.chmod(0o755)
 copy(ROOT/'scripts/nickelmenu.conf',P/'nickelmenu.conf')
-info={'port_version':'0.7.10-experimental','official_version':matched_version,'model':'Kobo Clara Colour (393)','firmware':'4.46.23836','first_launch':'NOT_PERFORMED','official_core_unmodified':True,'ui_assets_overlay':True,'font_sha256':hashlib.sha256((P/'fonts/NotoSansCJKsc-Regular.otf').read_bytes()).hexdigest()}
+info={'port_version':'0.7.11-experimental','official_version':matched_version,'model':'Kobo Clara Colour (393)','firmware':'4.46.23836','first_launch':'NOT_PERFORMED','official_core_unmodified':True,'ui_assets_overlay':True,'font_sha256':hashlib.sha256((P/'fonts/NotoSansCJKsc-Regular.otf').read_bytes()).hexdigest()}
 (P/'build-info.json').write_text(json.dumps(info,indent=2)+'\n')
 # Only resource bytes from this completed assembly enter the recovery archive.
 create_resource_recovery(P)

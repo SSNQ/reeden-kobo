@@ -1,4 +1,4 @@
-# Reeden Kobo 兼容层 (0.7.10 Experimental)
+# Reeden Kobo 兼容层 (0.7.11 Experimental)
 
 在 **Kobo Clara Colour（产品代码 393）** 上原字节运行官方 **Reeden Kindle（同时支持 `1.43.2+791` 与 `1.43.1+780`）** 核心的开源 C 宿主与硬件兼容层。
 
@@ -6,13 +6,15 @@
 
 > **非官方 / Experimental**：这是社区兼容层，不是 Reeden 或 Kobo 官方产品，不代表官方支持或背书。运行时拥有设备 root 权限并控制硬件；开始前请备份重要书籍和笔记，不能保证断电、损坏或所有配置都可恢复。
 >
-> **下载与电脑要求**：[最新 v0.7.10 一键安装/卸载包](https://github.com/SSNQ/reeden-kobo/releases/tag/v0.7.10)，需要 **Python 3.10+**。固定的 Bullseye 依赖免费 LTS 已结束，哈希校验不是持续安全更新；见 [依赖维护方案](docs/依赖安全维护.md)。
+> **下载与电脑要求**：[最新 v0.7.11 一键安装/卸载包](https://github.com/SSNQ/reeden-kobo/releases/tag/v0.7.11)，需要 **Python 3.10+**。固定的 Bullseye 依赖免费 LTS 已结束，哈希校验不是持续安全更新；见 [依赖维护方案](docs/依赖安全维护.md)。
 
 ---
 
 ## 当前主分支进展（2026-11-24）
 
-v0.7.10 重点提升了彩色壁纸与边框主题的翻页观感，并将默认 NickelMenu 精简为唯一入口 `Reeden`：彩色翻页提速约 40%（降至 ~0.4 秒）、背景画卷静止不闪动、淡彩通透不发灰，同时支持老用户无痛保留数据升级（自动精简旧菜单）。技术上在已测 Clara Colour（`1072×1448`, `rotate=3`）统一使用原生 `EINK_NORMAL` + 全屏 `GL16`/`GLKW16` `PARTIAL`（静态画卷 `0V` 不动、消除白底边框 Regal 粗边闪动与内框整块闪动），菜单保持 `GLRC16 + FULL`，保留 `REEDEN_COLOR_REFRESH=legacy` 回退开关。详见[本次发布说明](docs/releases/v0.7.10.md)。
+v0.7.11 带来全面的流畅度与续航专项优化：引入独立异步显示工作线程与单趟像素扫描/拷贝加速，连翻更跟手、冷启动更快；在已测 Clara Colour 上固化纯白底默认 REAGL 抗残影扫动（`GLR16 + FULL`）大幅减轻白底文字残影；默认 Flutter `20Hz` 刷新率 + `15s` 零 fork 后台守护降低静置耗电；新增磁吸休眠皮套（Hall 传感器 `/dev/input/event0`）与 15 分钟无操作自动深睡。详见[本次发布说明](docs/releases/v0.7.11.md)。
+
+v0.7.10 重点提升了彩色壁纸与边框主题的翻页观感，并将默认 NickelMenu 精简为唯一入口 `Reeden`：彩色翻页提速约 40%（降至 ~0.4 秒）、背景画卷静止不闪动、淡彩通透不发灰，同时支持老用户无痛保留数据升级（自动精简旧菜单）。详见[v0.7.10 发布说明](docs/releases/v0.7.10.md)。
 
 v0.7.9 针对未装过 KOReader 的设备在安装后原生书架扫入大量 Reeden 图标的问题，在 USB 安装器（`install.py`）与设备端安装脚本（`scripts/install.sh`）中自动检查并补齐 `.kobo/Kobo/Kobo eReader.conf` 的 `[FeatureSettings]/ExcludeSyncFolders` 隐藏目录忽略规则，保留已有自定义配置与原始字节。详见[v0.7.9 发布说明](docs/releases/v0.7.9.md)。
 
@@ -31,7 +33,7 @@ v0.7.5 已整合 Wi-Fi 桥接、夜间彩字分区刷新、翻页动画与文字
 - 程序及阅读数据安装在用户分区 `.adds/reeden-kobo`，菜单在 `.adds/nm/reeden-kobo`。不替换固件、系统库或开机启动项，不设置开机自启。运行时需要控制屏幕、触摸、电源和网络；恢复网络时可能回写 `/etc/resolv.conf`，恢复 DNS。
 - 开始前备份重要书籍和笔记。升级会保留旧安装和数据副本，需要足够剩余空间；不要在 Reeden 运行期间升级，也不要在写入时拔线。
 - 默认菜单仅保留启动入口，不再暴露 SSH 菜单项。可选诊断工具仅允许密钥认证，见 [SSH 说明](docs/SSH.md)。升级不自动终止现有 SSH 会话，旧服务需通过 `reeden-ssh.sh stop` 手动停止或重启设备。
-- [下载 v0.7.10 安装包](https://github.com/SSNQ/reeden-kobo/releases/tag/v0.7.10)。v0.7.3 及以前已被替代；不要混用旧标签自动生成的源码包和新版附件。
+- [下载 v0.7.11 安装包](https://github.com/SSNQ/reeden-kobo/releases/tag/v0.7.11)。v0.7.3 及以前已被替代；不要混用旧标签自动生成的源码包和新版附件。
 
 ### 退出和故障恢复
 
@@ -113,15 +115,15 @@ python3 install.py --official-core /path/to/Reeden-kindle.zip --output package
 
 - **原字节复用官方核心（双版本支持）**：同时支持 **`1.43.2+791`** 与 **`1.43.1+780`**，`libflutter_engine.so`、`libapp.so` 及原始资源保持原字节不变；不修改账号、授权或付费逻辑；禁用 Kindle 自更新覆盖 Kobo 宿主。
 - **墨水屏刷新策略（对齐 KOReader MTK）**：
-  - **白底灰阶**：局部 `GLR16 (4)` / 清屏 `GC16 (2)`
+  - **白底灰阶**：局部 `GLR16 (4)` / 清屏 `GC16 (2)`；Clara Colour 水波纹扫动默认走 REAGL 抗残影分段（`GLR16 + FULL`，可用 `REEDEN_TEXT_BAND_PATH=stable` 回退）
   - **纯灰阶黑底（夜间模式）**：局部 `GLKW16 (9)` / 清屏 `GCK16 (8)`，配合 KOReader MTK `night_mode 4` 硬件反相与互补灰阶提交，改善黑底全刷白闪；实际效果需按内容和主题验证
-  - **真实彩色与旧色擦除（v0.7.10 `smooth` 默认）**：在已测 Clara Colour（`1072×1448`, `rotate=3`）上统一采用原生 `EINK_NORMAL`（`flags=0`）原样输出 RGB；翻页使用全屏 `GL16`（夜间 `GLKW16`）+ `UPDATE_MODE_PARTIAL`，静态画卷保持 `0V` 不动；菜单走 48 像素对齐的 `GLRC16 + FULL`，显式清屏与彩色封面走 `GCC16 + FULL`（可用 `REEDEN_COLOR_REFRESH=legacy` 回退旧路径）；抑制 2 级以内 RGB 舍入噪声误触发彩色模式
-  - **帧同步与边界对齐**：16 像素对齐 + 边缘余量，RAM 帧缓存跳过重复帧，每次 FULL REAGL/CFA 请求等待刷新完成同步
+  - **真实彩色与旧色擦除（`smooth` 默认）**：在已测 Clara Colour（`1072×1448`, `rotate=3`）上统一采用原生 `EINK_NORMAL`（`flags=0`）原样输出 RGB；翻页使用全屏 `GL16`（夜间 `GLKW16`）+ `UPDATE_MODE_PARTIAL`，静态画卷保持 `0V` 不动；菜单走 48 像素对齐的 `GLRC16 + FULL`，显式清屏与彩色封面走 `GCC16 + FULL`（可用 `REEDEN_COLOR_REFRESH=legacy` 回退旧路径）；抑制 2 级以内 RGB 舍入噪声误触发彩色模式
+  - **异步显示流水线与省电调度**：独立显示工作线程与行级脏区拷贝（`REEDEN_ASYNC_DISPLAY=0` 可回退同步），默认 `20Hz` Flutter 刷新率（`REEDEN_REFRESH_RATE` 可调）、16ms 语义翻页合帧、跳过未变化行显存写入，以及 `15s` 零 fork 后台守护轮询
 - **前光与冷暖光控制（自适应 `1.43.2+` 原生滑块与 `1.43.1` 叠画滑块）**：
   - **`1.43.2+791`**：直接对接 Reeden 官方 UI 原生新增的「暖光」滑块（`currentAmberLevel` `0..24` 映射至底层 `lm3630a_led/color` `10..0` 反向混光），自动持久化至 `userdata/kobo-light.conf`
   - **`1.43.1+780`**：在「书页中央 → 显示」前光行下方合成硬件「冷暖」控制行（0 最冷 ～ 100 最暖，10% 步进）
-- **电源键锁屏（含 `1.43.2+` 彩色与透明叠底锁屏）、深度休眠与唤醒恢复**：
-  - 支持「自定义锁屏画面」（在 `1.43.2+791` 下支持 3/4 通道 **RGB 彩色锁屏封面**与**透明区域叠在当前书页上**），短按电源键锁屏并进入 Linux `mem` 深度休眠（充电时按 MTK 限制仅锁屏关灯、跳过内核深睡），再按直接唤醒回到当前书页
+- **电源键与磁吸皮套锁屏（含 `1.43.2+` 彩色与透明叠底锁屏）、自动深睡与唤醒恢复**：
+  - 支持「自定义锁屏画面」（在 `1.43.2+791` 下支持 3/4 通道 **RGB 彩色锁屏封面**与**透明区域叠在当前书页上**），短按电源键、磁吸皮套合盖（`/dev/input/event0` Hall 传感器，可用 `REEDEN_IGNORE_COVER=1` 关闭）或 **15 分钟无操作**（`REEDEN_IDLE_SLEEP_SEC` 可调）自动锁屏并进入 Linux `mem` 深度休眠（充电时按 MTK 限制仅锁屏关灯、跳过内核深睡），再按电源键或开盖直接唤醒回到当前书页
   - 使用独立非 `SIGCHLD` (`__WCLONE`) 监督进程等待休眠脚本，避免与 Dart 3.12.2 全局 `wait()` 回收线程竞争导致唤醒卡死
   - 记录 `preparing / suspended / resuming / complete` 阶段时间戳；准备或唤醒恢复超过 45 秒由 `guardian.sh` 自动恢复 Kobo 原生界面
 - **安全交接与退出恢复**：
@@ -143,7 +145,7 @@ python3 install.py --official-core /path/to/Reeden-kindle.zip --output package
 ### 推荐阅读设置
 
 - **纯白底主题**：建议在 Reeden 阅读设置中开启「水波纹翻页（快档）」，普通「翻页动画」选「无动画」，翻页更利落。
-- **彩色壁纸 / 边框主题**：`v0.7.10` 开箱即已优化；在满屏画卷或深色花纹背景上若觉文字略淡，可将字体调深（纯黑）并略调前光，同时保持 Reeden 自带的定期全刷开启。
+- **彩色壁纸 / 边框主题**：`smooth` 策略开箱即已优化；建议开启 Reeden 自带的定期全刷（每 6～10 页一次）以清零轻微残留；在满屏画卷或深色花纹背景上若觉文字略淡，可将字体调深（纯黑）并略调前光。
 - **锁屏封面**：建议在「我的 → 墨水屏」开启「自定义锁屏画面」。
 
 ### 常见问题（FAQ）
@@ -214,7 +216,7 @@ python3 uninstall.py --usb --purge
 
 ## 七、验证范围与版本发布
 
-[v0.7.10 发布说明](docs/releases/v0.7.10.md)、历史 [0.7.5 发布说明](docs/releases/v0.7.5.md) 和 [真机验收记录](docs/真机验收-0.7.2.md) 区分自动化验证与已完成的设备测试。隔离测试及 QEMU 不能替代隔夜休眠和真实功耗测量。
+[v0.7.11 发布说明](docs/releases/v0.7.11.md)、历史 [0.7.5 发布说明](docs/releases/v0.7.5.md) 和 [真机验收记录](docs/真机验收-0.7.2.md) 区分自动化验证与已完成的设备测试。隔离测试及 QEMU 不能替代隔夜休眠和真实功耗测量。
 
 新 Release 由标签 CI 构建：标签、源码 ZIP、安装 ZIP 的代码来自同一提交，附件提供 `COMMIT.txt` 和 `SHA256SUMS`。请勿忽略 Experimental 标记。旧历史中的路径及私人示例地址已清理，已有克隆请参阅 [历史清理说明](docs/历史清理.md)。
 

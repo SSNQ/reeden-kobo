@@ -36,11 +36,11 @@ while [ -d "$STATE/active" ]; do
         esac
     elif [ -f "$heartbeat" ]; then
         last=$(stat -c %Y "$heartbeat" 2>/dev/null || echo "$started")
-        if [ $((now-last)) -gt 20 ]; then echo "[guardian] heartbeat timeout" >> "$APP/logs/launcher.log"; break; fi
+        if [ $((now-last)) -gt 45 ]; then echo "[guardian] heartbeat timeout" >> "$APP/logs/launcher.log"; break; fi
     elif [ $((now-started)) -ge 30 ]; then
         echo "[guardian] no heartbeat" >> "$APP/logs/launcher.log"; break
     fi
-    sleep 5
+    sleep 15
 done
 [ -f "$STATE/owner" ] && [ "$(cat "$STATE/owner")" = "$GENERATION" ] || exit 0
 exec "$APP/recover.sh"

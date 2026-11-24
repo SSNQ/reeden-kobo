@@ -8,9 +8,37 @@ static bool colored(const uint8_t *p) {
      * colored glyph must still select CFA, regardless of its screen area. */
     return hi-lo>2;
 }
+static inline uint32_t load32(const uint8_t *p) {
+    uint32_t v;
+    memcpy(&v,p,sizeof(v));
+    return v;
+}
+static inline bool colored32(uint32_t px) {
+    if(((px^(px>>8))&0x0000ffffu)==0)return false;
+    uint32_t b=px&0xffu,g=(px>>8)&0xffu,r=(px>>16)&0xffu;
+    uint32_t lo=b<g?b:g;if(r<lo)lo=r;
+    uint32_t hi=b>g?b:g;if(r>hi)hi=r;
+    return hi-lo>2;
+}
+static bool row_has_color_range(const uint8_t *row,unsigned left,unsigned right_incl) {
+    unsigned x=left;
+    while(x+4<=right_incl+1){
+        const uint8_t *q=row+x*4;
+        uint32_t p0=load32(q),p1=load32(q+4),p2=load32(q+8),p3=load32(q+12);
+        if((((p0^(p0>>8))|(p1^(p1>>8))|(p2^(p2>>8))|(p3^(p3>>8)))&0x0000ffffu)!=0){
+            if(colored32(p0)||colored32(p1)||colored32(p2)||colored32(p3))return true;
+        }
+        x+=4;
+    }
+    while(x<=right_incl){
+        if(colored32(load32(row+x*4)))return true;
+        x++;
+    }
+    return false;
+}
 static bool image_has_color(const uint8_t *image,size_t stride,unsigned width,unsigned height){
-    for(unsigned y=0;y<height;y++)for(unsigned x=0;x<width;x++)
-        if(colored(image+(size_t)y*stride+x*4))return true;
+    for(unsigned y=0;y<height;y++)
+        if(row_has_color_range(image+(size_t)y*stride,0,width-1))return true;
     return false;
 }
 /* Read actual pixels: a black reader theme does not necessarily change the
@@ -102,17 +130,26 @@ bool refresh_plan(const uint8_t *old,const uint8_t *next,size_t stride,
                   const char *mode,RefreshPlan *out) {
     if(!next||!width||!height||stride<(size_t)width*4)return false;
     unsigned left=width,top=height,right=0,bottom=0,changed=0;
+    bool frame_color=false,color=false;
+    uint8_t row_changed[(4096+7)/8]={0};
+    bool track_rows=old&&height<=4096;
     if(!old) {
         left=top=0;right=width-1;bottom=height-1;changed=width*height;
+        frame_color=image_has_color(next,stride,width,height);
+        color=frame_color;
     } else {
         for(unsigned y=0;y<height;y++) {
-            const uint8_t *a=old+y*stride,*b=next+y*stride;
+            const uint8_t *a=old+(size_t)y*stride,*b=next+(size_t)y*stride;
             if(!memcmp(a,b,(size_t)width*4))continue;
+            if(track_rows)row_changed[y>>3]|=(uint8_t)(1u<<(y&7));
             for(unsigned x=0;x<width;x++,a+=4,b+=4) {
-                if(a[0]==b[0]&&a[1]==b[1]&&a[2]==b[2])continue;
+                uint32_t va=load32(a),vb=load32(b);
+                if(track_rows&&!frame_color&&colored32(vb))frame_color=true;
+                if(((va^vb)&0x00ffffffu)==0)continue;
                 if(x<left)left=x;if(x>right)right=x;
                 if(y<top)top=y;if(y>bottom)bottom=y;
                 changed++;
+                if(!color&&(colored32(vb)||colored32(va)))color=true;
             }
         }
     }
@@ -122,8 +159,6 @@ bool refresh_plan(const uint8_t *old,const uint8_t *next,size_t stride,
     int before=background_kind(old,stride,interior),after=background_kind(next,stride,interior);
     bool night=after>=0?after==1:before==1;
     bool frame_night=night;
-    bool frame_color=image_has_color(next,stride,width,height);
-    bool hw_invert=night&&!frame_color;
     bool polarity_changed=old&&before>=0&&after>=0&&before!=after;
     /* Auto/manual cleanup belongs to the frontend. A second backend page
      * counter can flash immediately before the app's own scheduled cleanup. */
@@ -137,11 +172,20 @@ bool refresh_plan(const uint8_t *old,const uint8_t *next,size_t stride,
         right=((right+2+15)/16)*16-1;bottom=((bottom+2+15)/16)*16-1;
         if(right>=width)right=width-1;if(bottom>=height)bottom=height-1;
     }
-    bool color=false;
-    for(unsigned y=top;y<=bottom&&!color;y++) {
-        for(unsigned x=left;x<=right;x++) {
-            size_t offset=(size_t)y*stride+x*4;
-            if(colored(next+offset)||(old&&colored(old+offset))) {color=true;break;}
+    if(old&&!track_rows)frame_color=image_has_color(next,stride,width,height);
+    if(track_rows&&!frame_color){
+        for(unsigned y=0;y<height;y++){
+            if(row_changed[y>>3]&(1u<<(y&7)))continue;
+            if(row_has_color_range(next+(size_t)y*stride,0,width-1)){frame_color=true;break;}
+        }
+    }
+    bool hw_invert=night&&!frame_color;
+    if(old&&!color&&frame_color){
+        if(clean)color=true;
+        else{
+            for(unsigned y=top;y<=bottom;y++){
+                if(row_has_color_range(next+(size_t)y*stride,left,right)){color=true;break;}
+            }
         }
     }
     /* A white popup over a dark book may need a daytime regional update. */

@@ -1,7 +1,6 @@
 #!/bin/sh
 # Clara Colour MTK only. Never unload its persistent Wi-Fi modules.
 set -u
-. "$(dirname -- "$0")/session.sh"
 export PATH=/usr/local/Kobo:/usr/sbin:/usr/bin:/sbin:/bin
 unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
 mode=${1:-status}
@@ -30,6 +29,7 @@ signal)
 on|off|resume|suspend|native) ;;
 *) exit 64;;
 esac
+. "$(dirname -- "$0")/session.sh"
 product=$(awk -F, '{print substr($NF,length($NF)-2)}' /mnt/onboard/.kobo/version 2>/dev/null)
 [ "$product" = 393 ] || exit 69
 app_owner() {

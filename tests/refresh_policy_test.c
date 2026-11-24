@@ -145,6 +145,21 @@ int main(void){
     assert(ar.width%48==0&&ar.height%48==0);
     RefreshRegion edge=refresh_align_region((RefreshRegion){1000,1400,72,48},1072,1448,48);
     assert(edge.left%48==0&&edge.top%48==0&&edge.left+edge.width==1072&&edge.top+edge.height==1448);
+    /* Single-pass diff/color edge cases: unchanged color inside halo, unchanged
+     * color outside dirty box, erased color, and unchanged B&W early return. */
+    memset(old,255,bytes);pixel(old,17,17,200,0,0);memcpy(next,old,bytes);pixel(next,18,18,0,0,0);
+    assert(refresh_plan(old,next,STRIDE,WIDTH,HEIGHT,false,"balanced",&p));
+    assert(p.color&&p.frame_color&&p.changed==1);
+    memset(old,255,bytes);pixel(old,10,10,200,0,0);memcpy(next,old,bytes);pixel(next,400,400,0,0,0);
+    assert(refresh_plan(old,next,STRIDE,WIDTH,HEIGHT,false,"balanced",&p));
+    assert(!p.color&&p.frame_color&&p.changed==1);
+    memset(old,255,bytes);pixel(old,400,400,200,0,0);memset(next,255,bytes);
+    assert(refresh_plan(old,next,STRIDE,WIDTH,HEIGHT,false,"balanced",&p));
+    assert(p.color&&!p.frame_color&&p.changed==1);
+    assert(refresh_plan(NULL,old,STRIDE,WIDTH,HEIGHT,false,"balanced",&p));
+    assert(p.color&&p.frame_color&&p.clean);
+    memset(old,255,bytes);memcpy(next,old,bytes);
+    assert(!refresh_plan(old,next,STRIDE,WIDTH,HEIGHT,false,"balanced",&p));
     free(old);free(next);
     puts("PASS: day/night/gray/color, polarity changes and white popups, 49 edge regions, frontend cleanup ownership, 48px alignment and timing coalescence");
     return 0;
