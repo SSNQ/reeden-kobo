@@ -12,6 +12,10 @@ typedef struct {
 
 /* Invalid explicit settings fail closed to the unchanged stable profile. */
 bool turn_options_load(TurnOptions *out);
+
+typedef enum { COLOR_REFRESH_SMOOTH, COLOR_REFRESH_LEGACY } ColorRefreshProfile;
+/* Invalid explicit settings fail closed to the smooth default profile. */
+bool color_options_load(ColorRefreshProfile *out);
 /* Uniform spatial progression, with a minimum actual gap to avoid catch-up
  * bursts. span_pixels is the distance between first and final band starts. */
 uint64_t turn_due_ns(const TurnOptions *,uint64_t start,uint64_t last,

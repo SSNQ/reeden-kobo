@@ -2,7 +2,7 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 echo ==================================================
-echo   Reeden Kobo (0.7.9) 一键卸载工具 (Windows)
+echo   Reeden Kobo (0.7.10) 一键卸载工具 (Windows)
 echo ==================================================
 where py >nul 2>nul
 if %errorlevel%==0 (

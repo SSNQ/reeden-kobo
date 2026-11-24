@@ -49,6 +49,18 @@ bool refresh_band(unsigned width,unsigned height,unsigned steps,unsigned index,
     if(right<=left)return false;
     *out=(RefreshRegion){left,0,right-left,height};return true;
 }
+RefreshRegion refresh_align_region(RefreshRegion r,unsigned width,unsigned height,
+                                   unsigned align){
+    if(!width||!height||!align||!r.width||!r.height)return r;
+    if(r.left>=width||r.top>=height)return r;
+    unsigned right=r.left+r.width,bottom=r.top+r.height;
+    if(right>width)right=width;
+    if(bottom>height)bottom=height;
+    unsigned left=(r.left/align)*align,top=(r.top/align)*align;
+    right=((right+align-1)/align)*align;if(right>width)right=width;
+    bottom=((bottom+align-1)/align)*align;if(bottom>height)bottom=height;
+    return (RefreshRegion){left,top,right-left,bottom-top};
+}
 unsigned refresh_night_parts(const uint8_t *old,const uint8_t *next,size_t stride,
                              unsigned width,unsigned height,RefreshPart *out){
     enum { ROW=48, TILES=(4096+ROW-1)/ROW };

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reeden Kobo (0.7.9) One-Click Builder & Installer.
+"""Reeden Kobo (0.7.10) One-Click Builder & Installer.
 
 Combines the verified MIT Kobo compatibility layer with the user's unmodified
 official Reeden Kindle 1.43.1+780 or 1.43.2+791 core and pinned Debian Bullseye ARMHF runtime
@@ -47,7 +47,7 @@ SUPPORTED_CORES = {
     },
 }
 OFFICIAL_LATEST_URL = 'https://download.reeden.app/Reeden/latest/Reeden-kindle.zip'
-PORT_VERSION = '0.7.9-experimental'
+PORT_VERSION = '0.7.10-experimental'
 SUPPORTED_PRODUCT = '393'
 
 
@@ -348,7 +348,7 @@ def download_official_core(temp_root: pathlib.Path) -> tuple[pathlib.Path, str]:
         result = None
         try:
             print(f'[1/4] 正在从 Reeden 官网下载并校验 ({OFFICIAL_LATEST_URL}, {attempt + 1}/3) ...')
-            req = urllib.request.Request(OFFICIAL_LATEST_URL, headers={'User-Agent': 'reeden-kobo-installer/0.7.9'})
+            req = urllib.request.Request(OFFICIAL_LATEST_URL, headers={'User-Agent': 'reeden-kobo-installer/0.7.10'})
             with open_url_with_cert_fallback(req, timeout=180) as resp, partial.open('wb') as out:
                 shutil.copyfileobj(resp, out)
                 expected_size = resp.headers.get('Content-Length')
@@ -417,7 +417,7 @@ def download_verified(url: str, sha256: str, cache_dir: pathlib.Path, alt_dirs: 
     cache_dir.mkdir(parents=True, exist_ok=True)
     dest = cache_dir / filename
     print(f'      下载依赖: {filename} ...')
-    req = urllib.request.Request(url, headers={'User-Agent': 'reeden-kobo-installer/0.7.9'})
+    req = urllib.request.Request(url, headers={'User-Agent': 'reeden-kobo-installer/0.7.10'})
     with open_url_with_cert_fallback(req, timeout=60) as resp, dest.open('wb') as out:
         shutil.copyfileobj(resp, out)
     if sha256_file(dest) != sha256:
@@ -961,17 +961,17 @@ def install_to_usb_mount(pkg_dir: pathlib.Path, mount: pathlib.Path, allow_upgra
         if backup is not None:
             print('👉 重要提示：若升级前原生书架已扫入 Reeden 图标，请安全弹出并重启一次 Kobo 让规则生效并清理旧条目；如清理时原系统删除了部分已索引资源，重新运行一次一键安装（保留数据升级）即可恢复完整文件。')
         else:
-            print('👉 下一步：安全弹出 Kobo USB 盘；如本机是首次配置忽略规则，建议先重启一次 Kobo 让原系统加载配置，再点击右下角 NickelMenu →「Reeden Kobo (test)」启动。')
+            print('👉 下一步：安全弹出 Kobo USB 盘；如本机是首次配置忽略规则，建议先重启一次 Kobo 让原系统加载配置，再点击右下角 NickelMenu →「Reeden」启动。')
     elif exclude_status == 'already_configured':
         print('ℹ️  Kobo 隐藏目录忽略规则 (ExcludeSyncFolders) 已就绪，保持原配置不变。')
-        print('👉 下一步：安全弹出 Kobo USB 盘，回到 Kobo 原生主界面，点击右下角 NickelMenu →「Reeden Kobo (test)」即可启动。')
+        print('👉 下一步：安全弹出 Kobo USB 盘，回到 Kobo 原生主界面，点击右下角 NickelMenu →「Reeden」即可启动。')
     else:
         print(
             '⚠️  检测到自定义且无法自动合并的 ExcludeSyncFolders 配置，未改动 .kobo/Kobo/Kobo eReader.conf。\n'
             f'    为避免原生书架将 Reeden 图标扫成未读图书，请手动确认 [FeatureSettings] 中包含：\n'
             f'    ExcludeSyncFolders={KOBO_EXCLUDE_SYNC_FOLDERS}'
         )
-        print('👉 下一步：安全弹出 Kobo USB 盘，回到 Kobo 原生主界面，点击右下角 NickelMenu →「Reeden Kobo (test)」即可启动。')
+        print('👉 下一步：安全弹出 Kobo USB 盘，回到 Kobo 原生主界面，点击右下角 NickelMenu →「Reeden」即可启动。')
 
 
 def install_via_ssh(
@@ -1036,7 +1036,7 @@ def install_via_ssh(
     result = subprocess.run(ssh_read + [install_cmd], text=True, capture_output=True)
     print(result.stdout + result.stderr, end='')
     result.check_returncode()
-    print('✅ SSH 一键安装完成（未自动启动应用）。请回到 Kobo 原生主界面，从 NickelMenu 点击「Reeden Kobo (test)」启动。')
+    print('✅ SSH 一键安装完成（未自动启动应用）。请回到 Kobo 原生主界面，从 NickelMenu 点击「Reeden」启动。')
 
 
 def main() -> int:

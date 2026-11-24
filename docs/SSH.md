@@ -1,10 +1,10 @@
 # 可选诊断 SSH
 
-阅读器和 USB 安装不需要 SSH，也不依赖 KOReader。公开安装包不自动启动 SSH，默认菜单仅提供 **Reeden SSH - Stop**。
+阅读器和 USB 安装不需要 SSH，也不依赖 KOReader。公开安装包不自动启动 SSH，默认 NickelMenu 仅保留启动项，不再暴露 SSH 菜单。
 
 ## 从旧版升级
 
-v0.7.0 的诊断脚本使用 KOReader dropbear 的密码检查跳过选项。升级脚本不会中断已有远程会话。请在原生菜单点击 **Reeden SSH - Stop** 关闭旧监听服务，结束已有 SSH 会话；或退出 Reeden 后重启设备。停止监听本身不会强制断开已连接的会话。
+v0.7.0 的诊断脚本使用 KOReader dropbear 的密码检查跳过选项。升级脚本不会中断已有远程会话。请运行 `sh /mnt/onboard/.adds/reeden-kobo/reeden-ssh.sh stop` 关闭旧监听服务并结束已有 SSH 会话，或退出 Reeden 后重启设备。停止监听本身不会强制断开已连接的会话。
 
 ## 确实需要诊断服务时
 

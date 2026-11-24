@@ -45,5 +45,11 @@ int main(void){
         }
         assert(previous==start+150000000ULL);
     }
+    ColorRefreshProfile cp;
+    unsetenv("REEDEN_COLOR_REFRESH");assert(color_options_load(&cp)&&cp==COLOR_REFRESH_SMOOTH);
+    setenv("REEDEN_COLOR_REFRESH","smooth",1);assert(color_options_load(&cp)&&cp==COLOR_REFRESH_SMOOTH);
+    setenv("REEDEN_COLOR_REFRESH","legacy",1);assert(color_options_load(&cp)&&cp==COLOR_REFRESH_LEGACY);
+    setenv("REEDEN_COLOR_REFRESH","bogus",1);assert(!color_options_load(&cp)&&cp==COLOR_REFRESH_SMOOTH);
+    unsetenv("REEDEN_COLOR_REFRESH");
     clear();puts("PASS: stable default, invalid config fallback, spatial timing, no catch-up bursts, overflow and both directions");
 }

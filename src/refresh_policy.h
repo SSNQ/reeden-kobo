@@ -12,9 +12,9 @@ typedef struct {
     bool clean,major,color,night,polarity_changed,hw_invert,frame_color,frame_night;
 } RefreshPlan;
 
-enum { REFRESH_GC16=2, REFRESH_GLR16=4, REFRESH_GCK16=8,
+enum { REFRESH_GC16=2, REFRESH_GL16=3, REFRESH_GLR16=4, REFRESH_GCK16=8,
        REFRESH_GLKW16=9, REFRESH_GCC16=10, REFRESH_GLRC16=11,
-       REFRESH_CFA_G2=0x600 };
+       REFRESH_CFA_NATIVE=0, REFRESH_CFA_G2=0x600 };
 
 /* Raw IDs, NOT libkobo names. Despite NickelDissolve ABOUT.md calling raw 8
  * daytime glkw16, this Clara Colour's live waveform_modes maps 8 -> gck16
@@ -32,9 +32,11 @@ bool refresh_plan(const uint8_t *old,const uint8_t *next,size_t stride,
 uint64_t refresh_deadline(uint64_t pixels_due,uint64_t clean_due,
                           uint64_t next_allowed,uint64_t now);
 bool refresh_duplicate_clean(uint64_t now,uint64_t last_clean,bool same_pixels);
-/* Non-overlapping, 16-pixel-aligned bands; forward reveals right to left. */
+/* Non-overlapping, aligned bands; forward reveals right to left. */
 bool refresh_band(unsigned width,unsigned height,unsigned steps,unsigned index,
                   bool forward,RefreshRegion *out);
+RefreshRegion refresh_align_region(RefreshRegion r,unsigned width,unsigned height,
+                                   unsigned align);
 enum { REFRESH_PARTS_MAX=17 };
 typedef struct {RefreshRegion region;bool color;} RefreshPart;
 /* Sparse colored text on a dark page: keep CFA confined to aligned row

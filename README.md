@@ -1,4 +1,4 @@
-# Reeden Kobo 兼容层 (0.7.9 Experimental)
+# Reeden Kobo 兼容层 (0.7.10 Experimental)
 
 在 **Kobo Clara Colour（产品代码 393）** 上原字节运行官方 **Reeden Kindle（同时支持 `1.43.2+791` 与 `1.43.1+780`）** 核心的开源 C 宿主与硬件兼容层。
 
@@ -6,13 +6,15 @@
 
 > **非官方 / Experimental**：这是社区兼容层，不是 Reeden 或 Kobo 官方产品，不代表官方支持或背书。运行时拥有设备 root 权限并控制硬件；开始前请备份重要书籍和笔记，不能保证断电、损坏或所有配置都可恢复。
 >
-> **下载与电脑要求**：[最新 v0.7.9 一键安装/卸载包](https://github.com/SSNQ/reeden-kobo/releases/tag/v0.7.9)，需要 **Python 3.10+**。固定的 Bullseye 依赖免费 LTS 已结束，哈希校验不是持续安全更新；见 [依赖维护方案](docs/依赖安全维护.md)。
+> **下载与电脑要求**：[最新 v0.7.10 一键安装/卸载包](https://github.com/SSNQ/reeden-kobo/releases/tag/v0.7.10)，需要 **Python 3.10+**。固定的 Bullseye 依赖免费 LTS 已结束，哈希校验不是持续安全更新；见 [依赖维护方案](docs/依赖安全维护.md)。
 
 ---
 
-## 当前主分支进展（2026-11-22）
+## 当前主分支进展（2026-11-24）
 
-v0.7.9 针对未装过 KOReader 的设备在安装后原生书架扫入大量 Reeden 图标的问题，在 USB 安装器（`install.py`）与设备端安装脚本（`scripts/install.sh`）中自动检查并补齐 `.kobo/Kobo/Kobo eReader.conf` 的 `[FeatureSettings]/ExcludeSyncFolders` 隐藏目录忽略规则，保留已有自定义配置与原始字节。详见[本次发布说明](docs/releases/v0.7.9.md)。
+v0.7.10 优化了彩色背景与边框主题的翻页刷新体验，并将默认 NickelMenu 精简为单一启动入口 `Reeden`：在已测 Clara Colour（`1072×1448`, `rotate=3`）上，彩色页面统一采用原生 `EINK_NORMAL`（原样输出 RGB），翻页使用全屏 `GL16`（夜间 `GLKW16`）+ `PARTIAL`（静态画卷保持 `0V` 不动、翻页耗时降至 ~430ms、消除白底边框 Regal 粗边闪动与内框整块闪动），菜单保持 `GLRC16 + FULL`，保留 `REEDEN_COLOR_REFRESH=legacy` 回退开关。详见[本次发布说明](docs/releases/v0.7.10.md)。
+
+v0.7.9 针对未装过 KOReader 的设备在安装后原生书架扫入大量 Reeden 图标的问题，在 USB 安装器（`install.py`）与设备端安装脚本（`scripts/install.sh`）中自动检查并补齐 `.kobo/Kobo/Kobo eReader.conf` 的 `[FeatureSettings]/ExcludeSyncFolders` 隐藏目录忽略规则，保留已有自定义配置与原始字节。详见[v0.7.9 发布说明](docs/releases/v0.7.9.md)。
 
 v0.7.8 针对安装后资源缺失导致无法启动的问题，加入受校验保护的本地资源恢复归档、每次启动的完整性复核，以及显示实际版本和失败文件的自检。仅补回缺失资源，已有文件内容变化、恢复归档损坏或程序文件缺失仍会阻止启动；不重算校验清单掩盖错误。详见[v0.7.8 发布说明](docs/releases/v0.7.8.md)与[资源缺失排查和恢复](docs/资源缺失排查与恢复-20261105.md)。
 
@@ -28,13 +30,13 @@ v0.7.5 已整合 Wi-Fi 桥接、夜间彩字分区刷新、翻页动画与文字
 - 安装器和启动脚本检查产品代码；`fb-guard` 另检查竖屏 `1072×1448`、32bpp、rotation=3 及帧缓冲布局，在交接原生界面之前拒绝不匹配的显示配置。
 - 程序及阅读数据安装在用户分区 `.adds/reeden-kobo`，菜单在 `.adds/nm/reeden-kobo`。不替换固件、系统库或开机启动项，不设置开机自启。运行时需要控制屏幕、触摸、电源和网络；恢复网络时可能回写 `/etc/resolv.conf`，恢复 DNS。
 - 开始前备份重要书籍和笔记。升级会保留旧安装和数据副本，需要足够剩余空间；不要在 Reeden 运行期间升级，也不要在写入时拔线。
-- 默认菜单不再提供开启 SSH 的入口，只保留 **Reeden SSH - Stop** 以便关闭旧版监听服务。可选诊断工具仅允许密钥认证，见 [SSH 说明](docs/SSH.md)。升级不自动终止现有 SSH 会话，旧服务需手动停止或重启设备。
-- [下载 v0.7.9 安装包](https://github.com/SSNQ/reeden-kobo/releases/tag/v0.7.9)。v0.7.3 及以前已被替代；不要混用旧标签自动生成的源码包和新版附件。
+- 默认菜单仅保留启动入口，不再暴露 SSH 菜单项。可选诊断工具仅允许密钥认证，见 [SSH 说明](docs/SSH.md)。升级不自动终止现有 SSH 会话，旧服务需通过 `reeden-ssh.sh stop` 手动停止或重启设备。
+- [下载 v0.7.10 安装包](https://github.com/SSNQ/reeden-kobo/releases/tag/v0.7.10)。v0.7.3 及以前已被替代；不要混用旧标签自动生成的源码包和新版附件。
 
 ### 退出和故障恢复
 
 1. 正常退出：同时按住屏幕左上角和右上角约 2 秒，返回 Kobo 原生界面。
-2. 软件恢复：若原生菜单可用，选择 **Reeden Kobo - Return Home**；已有 SSH 时可运行 `sh /mnt/onboard/.adds/reeden-kobo/recover.sh`。
+2. 软件恢复：再次点击 NickelMenu 中的 **Reeden** 会自动清理残留状态并恢复；已有 SSH 时可运行 `sh /mnt/onboard/.adds/reeden-kobo/recover.sh`。
 3. 若软件完全无响应，按设备的硬件强制关机/开机方式恢复。长按电源键可能需要较长时间，必要时接 USB 充电后重试；不能保证所有内核或硬件故障均可由软件恢复。
 4. 需卸载时先退出 Reeden，再连接 USB，双击电脑端「一键卸载」脚本。默认保留完整备份，可选择删除当前安装及阅读数据；详见下方卸载步骤。
 
@@ -88,7 +90,7 @@ v0.7.5 已整合 Wi-Fi 桥接、夜间彩字分区刷新、翻页动画与文字
    - 合成 `ui-assets` 中文字体与数学符号覆盖层
    - 校验 Kobo 机型码（`393`），将清单中的全部文件写入 `.adds/reeden-kobo` 并逐文件校验 SHA-256（升级时自动备份旧版并保留 `userdata/` 阅读进度、笔记、冷暖光设置及 `storage/` 书库）
    - 写入 NickelMenu 启动项 `.adds/nm/reeden-kobo`
-4. 安全弹出 USB，回到 Kobo 原生主界面，点击右下角 **NickelMenu → `Reeden Kobo (test)`** 即可启动。
+4. 安全弹出 USB，回到 Kobo 原生主界面，点击右下角 **NickelMenu → `Reeden`** 即可启动。
 
 #### 方式 B：Wi-Fi SSH 无线一键安装 / 升级
 若 Kobo 已配置可用的 SSH 连接（如 KOReader 密钥认证，端口 `2222`；可选 Reeden 密钥认证端口 `2223`），可使用下列命令。阅读器本体和 USB 安装不依赖 KOReader。
@@ -113,7 +115,7 @@ python3 install.py --official-core /path/to/Reeden-kindle.zip --output package
 - **墨水屏刷新策略（对齐 KOReader MTK）**：
   - **白底灰阶**：局部 `GLR16 (4)` / 清屏 `GC16 (2)`
   - **纯灰阶黑底（夜间模式）**：局部 `GLKW16 (9)` / 清屏 `GCK16 (8)`，配合 KOReader MTK `night_mode 4` 硬件反相与互补灰阶提交，改善黑底全刷白闪；实际效果需按内容和主题验证
-  - **真实彩色与旧色擦除**：局部 `GLRC16 (11)` / 清屏 `GCC16 (10)` + `CFA G2 (0x600)`，抑制 2 级以内 RGB 舍入噪声误触发彩色模式
+  - **真实彩色与旧色擦除（v0.7.10 `smooth` 默认）**：在已测 Clara Colour（`1072×1448`, `rotate=3`）上统一采用原生 `EINK_NORMAL`（`flags=0`）原样输出 RGB；翻页使用全屏 `GL16`（夜间 `GLKW16`）+ `UPDATE_MODE_PARTIAL`，静态画卷保持 `0V` 不动；菜单走 48 像素对齐的 `GLRC16 + FULL`，显式清屏与彩色封面走 `GCC16 + FULL`（可用 `REEDEN_COLOR_REFRESH=legacy` 回退旧路径）；抑制 2 级以内 RGB 舍入噪声误触发彩色模式
   - **帧同步与边界对齐**：16 像素对齐 + 边缘余量，RAM 帧缓存跳过重复帧，每次 FULL REAGL/CFA 请求等待刷新完成同步
 - **前光与冷暖光控制（自适应 `1.43.2+` 原生滑块与 `1.43.1` 叠画滑块）**：
   - **`1.43.2+791`**：直接对接 Reeden 官方 UI 原生新增的「暖光」滑块（`currentAmberLevel` `0..24` 映射至底层 `lm3630a_led/color` `10..0` 反向混光），自动持久化至 `userdata/kobo-light.conf`
@@ -130,12 +132,12 @@ python3 install.py --official-core /path/to/Reeden-kindle.zip --output package
 
 ## 四、日常使用与故障恢复
 
-1. **启动**：先从 KOReader 退出回到 Kobo 原生主页并连接 Wi-Fi，在 NickelMenu 点击 `Reeden Kobo (test)`。
+1. **启动**：先从 KOReader 退出回到 Kobo 原生主页并连接 Wi-Fi，在 NickelMenu 点击 `Reeden`。
 2. **导书**：应用内 `/mnt/us` 映射到 `/mnt/onboard/.adds/reeden-kobo/storage/`（如放入 `storage/documents/` 或使用 Wi-Fi 传书）。
 3. **锁屏与唤醒**：建议在「我的 → 墨水屏」开启「自定义锁屏画面」。短按电源键休眠，再按唤醒继续阅读。
 4. **退出回原生系统**：同时按住屏幕 **左上角 + 右上角约 2 秒**。
 5. **紧急恢复与卸载**：
-   - NickelMenu 点击 `Reeden Kobo - Return Home`，或 SSH 运行 `sh /mnt/onboard/.adds/reeden-kobo/recover.sh`
+   - 重新点击 NickelMenu 中的 `Reeden`（自动恢复），或 SSH 运行 `sh /mnt/onboard/.adds/reeden-kobo/recover.sh`
    - 卸载：退出后连接 USB，双击电脑端「一键卸载」脚本，默认保留完整备份（见下一节）
 
 ## 五、一键卸载（USB，免 SSH）

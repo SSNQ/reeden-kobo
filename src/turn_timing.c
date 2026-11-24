@@ -34,6 +34,12 @@ bool turn_options_load(TurnOptions *out){
 invalid:
     *out=(TurnOptions){.profile=TURN_STABLE};return false;
 }
+bool color_options_load(ColorRefreshProfile *out){
+    const char *p=getenv("REEDEN_COLOR_REFRESH");
+    if(!p||!strcmp(p,"smooth")){*out=COLOR_REFRESH_SMOOTH;return true;}
+    if(!strcmp(p,"legacy")){*out=COLOR_REFRESH_LEGACY;return true;}
+    *out=COLOR_REFRESH_SMOOTH;return false;
+}
 static uint64_t plus(uint64_t a,uint64_t b){return UINT64_MAX-a<b?UINT64_MAX:a+b;}
 uint64_t turn_due_ns(const TurnOptions *o,uint64_t start,uint64_t last,
                      unsigned pixels,unsigned span_pixels){

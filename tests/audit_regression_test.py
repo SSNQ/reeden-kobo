@@ -117,7 +117,9 @@ print('PASS: USB ENOSPC/promotion/menu rollback and space preflight; current che
 # NickelMenu cmd_output accepts only 0 < timeout_ms < 10000. Validate the
 # single config used by both assemblers against this external interface.
 menu = (ROOT / 'scripts/nickelmenu.conf').read_text()
-for line in menu.splitlines():
+lines = menu.splitlines()
+assert lines == ['menu_item:main:Reeden:cmd_spawn:quiet:exec /mnt/onboard/.adds/reeden-kobo/run.sh']
+for line in lines:
     fields = line.split(':', 4)
     assert len(fields) == 5 and fields[0] == 'menu_item'
     if fields[3] == 'cmd_output':
@@ -125,4 +127,4 @@ for line in menu.splitlines():
         assert 0 < int(timeout) < 10000, line
         assert command.startswith('/mnt/onboard/.adds/reeden-kobo/')
 assert ':Reeden SSH:' not in menu and 'reeden-ssh.sh start' not in menu
-print('PASS: NickelMenu timeout limits and no default SSH start action')
+print('PASS: NickelMenu minimal launch entry, timeout limits and no default SSH start action')

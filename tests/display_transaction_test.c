@@ -16,13 +16,14 @@ volatile int app_quit;
 bool light_panel_compose(uint8_t *p,size_t s,unsigned w,unsigned h){(void)p;(void)s;(void)w;(void)h;return false;}
 static FILE *command_file;
 static bool inverted,in_flight,fail_inversion;
-static unsigned submitted,completed,last_wave,last_flags,commands;
+static unsigned submitted,completed,last_wave,last_mode,last_flags,commands;
 static unsigned outstanding,band_count,fail_band_at,submission_waits;
 static bool pending_markers[1024],needs_submission_wait;
 static unsigned band_left[128];
 static unsigned band_top[128];
 static bool expect_parts;
 static unsigned part_color_rows,part_gray_rows;
+static uint32_t last_region_left,last_region_top,last_region_width,last_region_height;
 static uint64_t last_band_submit;
 static unsigned cancel_at_band,fail_submission_at,peak_outstanding;
 static bool fail_complete_once,fail_normal_once;
@@ -74,11 +75,17 @@ int __wrap_ioctl(int fd,unsigned long request,...){
             if(u->flags==REFRESH_CFA_G2){assert(u->waveform==REFRESH_GLRC16);part_color_rows+=u->height;}
             else {assert(u->flags==0&&u->waveform==REFRESH_GLKW16);part_gray_rows+=u->height;}
             needs_submission_wait=true;
-        }else {assert(u->mode==1&&!outstanding);if(fail_normal_once){fail_normal_once=false;errno=EIO;return -1;}}
+        }else {
+            assert(!outstanding);
+            if(display->color_profile==COLOR_REFRESH_SMOOTH&&display->v.xres==1072&&display->v.yres==1448&&display->v.rotate==3)assert(u->mode==0||u->mode==1);
+            else assert(u->mode==1);
+            if(fail_normal_once){fail_normal_once=false;errno=EIO;return -1;}
+        }
         assert(u->marker<1024&&!pending_markers[u->marker]);
         if(!outstanding){immutable_image=malloc(display->length);assert(immutable_image);memcpy(immutable_image,display->mem,display->length);}
         pending_markers[u->marker]=true;outstanding++;if(outstanding>peak_outstanding)peak_outstanding=outstanding;
-        submitted=u->marker;last_wave=u->waveform;last_flags=u->flags;
+        submitted=u->marker;last_wave=u->waveform;last_mode=u->mode;last_flags=u->flags;
+        last_region_left=u->left;last_region_top=u->top;last_region_width=u->width;last_region_height=u->height;
         last_first_pixel=((uint32_t*)display->mem)[0];in_flight=true;
     }else if(request==0x40044637UL){
         assert(*(uint32_t*)p==submitted&&needs_submission_wait);
@@ -272,7 +279,7 @@ static void check_experimental_turns(Display *original){
     memset(d.pending,200,d.length);d.dirty=true;at=band_count;flush_now(&d);assert(band_count==at);
     d.v.rotate=3;assert(display_arm_page_turn(&d,true,false,16));
     memset(d.pending,180,d.length);d.pending[0]=250;d.dirty=true;
-    flush_now(&d);assert(band_count==at&&last_flags==REFRESH_CFA_G2);
+    flush_now(&d);assert(band_count==at&&last_wave==REFRESH_GL16&&last_mode==0&&last_flags==REFRESH_CFA_NATIVE);
     assert(d.quality_refreshes==1); /* No optional update on unknown geometry or CFA. */
     d.evidence_options.quality_after_turn=false;
     memset(d.pending,200,d.length);d.dirty=true;flush_now(&d); /* Erase old color safely. */
@@ -347,6 +354,101 @@ static void check_pixel_transfer(Display *original){
     free(d.pending);free(d.committed);free(d.mem);pthread_mutex_destroy(&d.lock);display=original;
     puts("PASS: all 256 antialias gray levels, padded input/FB strides, offsets, inversion round trip and untouched padding");
 }
+static void check_color_refresh(Display *original){
+    unsetenv("REEDEN_COLOR_REFRESH");
+    ColorRefreshProfile cp;
+    assert(color_options_load(&cp)&&cp==COLOR_REFRESH_SMOOTH);
+    assert(!setenv("REEDEN_COLOR_REFRESH","legacy",1)&&color_options_load(&cp)&&cp==COLOR_REFRESH_LEGACY);
+    assert(!setenv("REEDEN_COLOR_REFRESH","bogus",1)&&!color_options_load(&cp)&&cp==COLOR_REFRESH_SMOOTH);
+    unsetenv("REEDEN_COLOR_REFRESH");
+
+    Display d={.fd=99,.pending_stride=1072*4,.length=1072*1448*4};display=&d;
+    d.v.xres=1072;d.v.yres=1448;d.v.rotate=3;d.f.line_length=d.pending_stride;
+    d.v.red=(struct fb_bitfield){0,8,0};d.v.green=(struct fb_bitfield){8,8,0};
+    d.v.blue=(struct fb_bitfield){16,8,0};d.v.transp=(struct fb_bitfield){24,8,0};
+    d.pending=malloc(d.length);d.committed=malloc(d.length);d.mem=calloc(1,d.length);
+    assert(d.pending&&d.committed&&d.mem);pthread_mutex_init(&d.lock,NULL);strcpy(d.mode,"balanced");
+    assert(color_options_load(&d.color_profile)&&d.color_profile==COLOR_REFRESH_SMOOTH);
+
+    /* 1. Initial clean frame: GCC16 + FULL + native CFA (flags=0), unmodified RGB. */
+    for(size_t i=0;i<d.length;i+=4){d.pending[i]=186;d.pending[i+1]=219;d.pending[i+2]=241;d.pending[i+3]=255;}
+    d.frames=1;d.dirty=d.full=true;flush_now(&d);
+    assert(last_wave==REFRESH_GCC16&&last_mode==1&&last_flags==REFRESH_CFA_NATIVE);
+    assert(d.mem[0]==241&&d.mem[1]==219&&d.mem[2]==186);
+
+    /* 2. Light colored semantic turn: GL16 + PARTIAL + native CFA across full screen. */
+    assert(display_arm_page_turn(&d,true,false,24));
+    for(unsigned y=160;y<1200;y+=4)for(unsigned x=100;x<950;x+=4){
+        uint8_t *p=d.pending+y*d.pending_stride+x*4;p[0]=20;p[1]=20;p[2]=20;
+    }
+    d.dirty=true;flush_now(&d);
+    assert(last_wave==REFRESH_GL16&&last_mode==0&&last_flags==REFRESH_CFA_NATIVE);
+    assert(last_region_left==0&&last_region_top==0&&last_region_width==1072&&last_region_height==1448);
+    assert(d.mem[0]==241&&d.mem[1]==219&&d.mem[2]==186);
+
+    /* 3. Light colored non-turn menu/UI update: GLRC16 + FULL + native CFA, 48px-aligned box. */
+    for(unsigned y=40;y<140;y+=4)for(unsigned x=40;x<300;x+=4){
+        uint8_t *p=d.pending+y*d.pending_stride+x*4;p[0]=50;p[1]=50;p[2]=50;
+    }
+    d.dirty=true;flush_now(&d);
+    assert(last_wave==REFRESH_GLRC16&&last_mode==1&&last_flags==REFRESH_CFA_NATIVE);
+    assert(last_region_left==0&&last_region_top==0&&last_region_width%48==0&&last_region_height%48==0);
+
+    /* 4. Dark colored dense frame: polarity clean GCC16, turn GLKW16+PARTIAL, menu GLRC16+FULL. */
+    for(size_t i=0;i<d.length;i+=4){d.pending[i]=40;d.pending[i+1]=24;d.pending[i+2]=16;d.pending[i+3]=255;}
+    d.dirty=true;flush_now(&d);
+    assert(last_wave==REFRESH_GCC16&&last_mode==1&&last_flags==REFRESH_CFA_NATIVE&&!inverted);
+    assert(display_arm_page_turn(&d,true,false,24));
+    for(unsigned y=160;y<1200;y+=4)for(unsigned x=100;x<950;x+=4){
+        uint8_t *p=d.pending+y*d.pending_stride+x*4;p[0]=220;p[1]=220;p[2]=220;
+    }
+    d.dirty=true;flush_now(&d);
+    assert(last_wave==REFRESH_GLKW16&&last_mode==0&&last_flags==REFRESH_CFA_NATIVE&&!inverted);
+    assert(last_region_left==0&&last_region_top==0&&last_region_width==1072&&last_region_height==1448);
+    for(unsigned y=40;y<140;y+=4)for(unsigned x=40;x<300;x+=4){
+        uint8_t *p=d.pending+y*d.pending_stride+x*4;p[0]=200;p[1]=200;p[2]=200;
+    }
+    d.dirty=true;flush_now(&d);
+    assert(last_wave==REFRESH_GLRC16&&last_mode==1&&last_flags==REFRESH_CFA_NATIVE&&!inverted);
+
+    /* 5. RGB color sleep cover under smooth profile uses GCC16 + FULL + native CFA. */
+    {
+        char cdir[]="/tmp/reeden-color-cover-XXXXXX";assert(mkdtemp(cdir));
+        char cpath[512];snprintf(cpath,sizeof(cpath),"%s/cover.rgb",cdir);
+        FILE *cf=fopen(cpath,"wb");assert(cf);
+        uint8_t *rgb=malloc(1072*1448*3);assert(rgb);
+        for(size_t i=0;i<1072*1448*3;i+=3){rgb[i]=220;rgb[i+1]=40;rgb[i+2]=30;}
+        assert(fwrite(rgb,1,1072*1448*3,cf)==1072*1448*3);fclose(cf);free(rgb);
+        assert(!display_cover(&d,cpath,1072,1448,3));
+        assert(last_wave==REFRESH_GCC16&&last_mode==1&&last_flags==REFRESH_CFA_NATIVE);
+        unlink(cpath);rmdir(cdir);
+    }
+
+    /* 6. Legacy opt-out restores GLRC16 + CFA_G2 + FULL dirty box. */
+    for(size_t i=0;i<d.length;i+=4){d.pending[i]=186;d.pending[i+1]=219;d.pending[i+2]=241;d.pending[i+3]=255;}
+    d.dirty=true;d.full=true;flush_now(&d);
+    d.color_profile=COLOR_REFRESH_LEGACY;
+    assert(display_arm_page_turn(&d,true,false,24));
+    for(unsigned y=200;y<1100;y+=4)for(unsigned x=120;x<900;x+=4){
+        uint8_t *p=d.pending+y*d.pending_stride+x*4;p[0]=25;p[1]=25;p[2]=25;
+    }
+    d.dirty=true;flush_now(&d);
+    assert(last_wave==REFRESH_GLRC16&&last_mode==1&&last_flags==REFRESH_CFA_G2);
+    assert(last_region_width<1072&&last_region_height<1448);
+
+    /* 7. Non-measured geometry ignores smooth and keeps baseline GLRC16 + CFA_G2. */
+    d.color_profile=COLOR_REFRESH_SMOOTH;
+    d.v.rotate=0;
+    assert(display_arm_page_turn(&d,true,false,24));
+    for(unsigned y=200;y<1100;y+=4)for(unsigned x=120;x<900;x+=4){
+        uint8_t *p=d.pending+y*d.pending_stride+x*4;p[0]=45;p[1]=45;p[2]=45;
+    }
+    d.dirty=true;flush_now(&d);
+    assert(last_wave==REFRESH_GLRC16&&last_mode==1&&last_flags==REFRESH_CFA_G2);
+
+    free(d.pending);free(d.committed);free(d.mem);pthread_mutex_destroy(&d.lock);display=original;
+    puts("PASS: smooth color default (GL16/GLKW16+PARTIAL turns, GLRC16+FULL menus, GCC16 covers/cleans, native CFA), legacy opt-out and geometry guard");
+}
 int main(void){
     char root[]="/tmp/reeden-display-test-XXXXXX";assert(mkdtemp(root));char path[512];
     snprintf(path,sizeof(path),"%s/state",root);assert(!mkdir(path,0700));assert(!setenv("REEDEN_KOBO_DIR",root,1));
@@ -397,6 +499,7 @@ int main(void){
     check_localized_color(&d);
     check_experimental_turns(&d);
     check_pixel_transfer(&d);
+    check_color_refresh(&d);
     /* A failed global write must retain its recovery obligation and abort. */
     fail_inversion=true;d.direct_night=false;display_full(&d);flush_now(&d);assert(app_quit&&access(path,F_OK)==0);
     unlink(path);snprintf(path,sizeof(path),"%s/state",root);rmdir(path);rmdir(root);

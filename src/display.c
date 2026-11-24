@@ -59,8 +59,10 @@ int display_open(Display *d){
     memset(d,0,sizeof(*d));d->fd=-1;pthread_mutex_init(&d->lock,NULL);strcpy(d->mode,"balanced");
     atomic_init(&d->turn_cancel,false);
     if(!turn_options_load(&d->turn_options))fprintf(stderr,"[page-turn] invalid experiment configuration; stable profile retained\n");
+    if(!color_options_load(&d->color_profile))fprintf(stderr,"[color-refresh] invalid configuration; smooth profile retained\n");
     if(!frame_evidence_options_load(&d->evidence_options))fprintf(stderr,"[frame-evidence] invalid configuration; diagnostics disabled\n");
     if(d->evidence_options.directory[0]||d->evidence_options.quality_after_turn||d->evidence_options.reagl_bands)d->turn_options.trace=true;
+    fprintf(stderr,"[color-refresh] profile=%s\n",d->color_profile==COLOR_REFRESH_LEGACY?"legacy":"smooth");
     const char *p=getenv("REEDEN_FB");if(!p)p="/dev/fb0";
     d->fd=open(p,O_RDONLY|O_CLOEXEC);if(d->fd<0)return -1;
     if(ioctl(d->fd,FBIOGET_VSCREENINFO,&d->v)||ioctl(d->fd,FBIOGET_FSCREENINFO,&d->f))return -1;
@@ -275,13 +277,32 @@ static void flush(Display *d,const uint8_t *cover){
     if(!cover&&!plan.clean&&plan.major&&plan.frame_night&&plan.color&&!plan.hw_invert)
         part_count=refresh_night_parts(d->committed_valid?d->committed:NULL,source,
                                      d->pending_stride,d->v.xres,d->v.yres,parts);
+    bool measured_geom=d->v.xres==1072&&d->v.yres==1448&&d->v.rotate==3;
     bool semantic_turn=!cover&&d->page_turn_direction&&now<=d->page_turn_until&&plan.major;
+    bool smooth_color=plan.color&&measured_geom&&d->color_profile==COLOR_REFRESH_SMOOTH;
+    uint32_t single_mode=1;
+    if(smooth_color){
+        /* Clara Colour (Kaleido 3) native E-Ink CFA (flags=0) keeps unchanged
+         * background artwork motionless in PARTIAL mode and matches gain across
+         * clean, menu, and turn frames. GL16 (23f) avoids GLRC16's 30->29 Regal
+         * halo on white-center border themes and minimizes old-text pullback on
+         * full-page paintings; menus stay GLRC16+FULL to prevent ghosting. */
+        plan.flags=REFRESH_CFA_NATIVE;
+        if(!plan.clean&&!cover){
+            if(semantic_turn&&!inversion_change&&!part_count){
+                plan.waveform=plan.night?REFRESH_GLKW16:REFRESH_GL16;
+                plan.region=(RefreshRegion){0,0,d->v.xres,d->v.yres};
+                single_mode=0;
+            }else{
+                plan.waveform=REFRESH_GLRC16;
+                plan.region=refresh_align_region(plan.region,d->v.xres,d->v.yres,48);
+            }
+        }
+    }
     bool animate=semantic_turn&&!plan.clean&&!plan.color&&!plan.frame_color&&!inversion_change&&d->v.xres>=160;
     if(d->turn_options.profile==TURN_OFF)animate=false;
-    if(d->turn_options.profile==TURN_TIMED&&
-       (d->v.xres!=1072||d->v.yres!=1448||d->v.rotate!=3))animate=false;
-    if(d->evidence_options.reagl_bands&&
-       (d->v.xres!=1072||d->v.yres!=1448||d->v.rotate!=3))animate=false;
+    if(d->turn_options.profile==TURN_TIMED&&!measured_geom)animate=false;
+    if(d->evidence_options.reagl_bands&&!measured_geom)animate=false;
     bool forward=d->page_turn_direction>0;
     if(cover||plan.major||plan.clean||now>d->page_turn_until)d->page_turn_direction=0;
     if(animate||part_count)plan.region=(RefreshRegion){0,0,d->v.xres,d->v.yres};
@@ -349,7 +370,7 @@ static void flush(Display *d,const uint8_t *cover){
                 fprintf(stderr,"[text-quality] completed ordinary whole-page comparison wave=%u mode=1 flags=0 marker=%u\n",q.waveform,q.marker);
             }
         }
-        if(!bands)u=(struct update){.region={plan.region.top,plan.region.left,plan.region.width,plan.region.height},.waveform=plan.waveform,.mode=1,.marker=next_marker(d),.flags=plan.flags};
+        if(!bands)u=(struct update){.region={plan.region.top,plan.region.left,plan.region.width,plan.region.height},.waveform=plan.waveform,.mode=single_mode,.marker=next_marker(d),.flags=plan.flags};
         if(!bands&&send_update(d,&u,trace)<0){fprintf(stderr,"[display] HWTCON_SEND_UPDATE failed: %s\n",strerror(errno));d->full=true;d->failures++;if(d->failures>=3)app_quit=1;}
         else {
             /* Never call an unconfirmed target the committed image. This

@@ -140,7 +140,12 @@ int main(void){
     assert(!refresh_duplicate_clean(700*ms,100*ms,true));
     assert(!refresh_duplicate_clean(500*ms,100*ms,false));
     assert(!refresh_duplicate_clean(500*ms,0,true));
+    RefreshRegion ar=refresh_align_region((RefreshRegion){50,100,200,300},1072,1448,48);
+    assert(ar.left==48&&ar.top==96&&ar.left+ar.width>=250&&ar.top+ar.height>=400);
+    assert(ar.width%48==0&&ar.height%48==0);
+    RefreshRegion edge=refresh_align_region((RefreshRegion){1000,1400,72,48},1072,1448,48);
+    assert(edge.left%48==0&&edge.top%48==0&&edge.left+edge.width==1072&&edge.top+edge.height==1448);
     free(old);free(next);
-    puts("PASS: day/night/gray/color, polarity changes and white popups, 49 edge regions, frontend cleanup ownership and timing coalescence");
+    puts("PASS: day/night/gray/color, polarity changes and white popups, 49 edge regions, frontend cleanup ownership, 48px alignment and timing coalescence");
     return 0;
 }

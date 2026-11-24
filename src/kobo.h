@@ -20,6 +20,7 @@ typedef struct {
     unsigned animated_refreshes;
     bool direct_night; unsigned localized_color_refreshes;
     TurnOptions turn_options;
+    ColorRefreshProfile color_profile;
     FrameEvidenceOptions evidence_options;
     unsigned quality_refreshes;
     atomic_bool turn_cancel;
