@@ -12,7 +12,7 @@
 
 ## 当前主分支进展（2026-11-24）
 
-v0.7.10 优化了彩色背景与边框主题的翻页刷新体验，并将默认 NickelMenu 精简为单一启动入口 `Reeden`：在已测 Clara Colour（`1072×1448`, `rotate=3`）上，彩色页面统一采用原生 `EINK_NORMAL`（原样输出 RGB），翻页使用全屏 `GL16`（夜间 `GLKW16`）+ `PARTIAL`（静态画卷保持 `0V` 不动、翻页耗时降至 ~430ms、消除白底边框 Regal 粗边闪动与内框整块闪动），菜单保持 `GLRC16 + FULL`，保留 `REEDEN_COLOR_REFRESH=legacy` 回退开关。详见[本次发布说明](docs/releases/v0.7.10.md)。
+v0.7.10 重点提升了彩色壁纸与边框主题的翻页观感，并将默认 NickelMenu 精简为唯一入口 `Reeden`：彩色翻页提速约 40%（降至 ~0.4 秒）、背景画卷静止不闪动、淡彩通透不发灰，同时支持老用户无痛保留数据升级（自动精简旧菜单）。技术上在已测 Clara Colour（`1072×1448`, `rotate=3`）统一使用原生 `EINK_NORMAL` + 全屏 `GL16`/`GLKW16` `PARTIAL`（静态画卷 `0V` 不动、消除白底边框 Regal 粗边闪动与内框整块闪动），菜单保持 `GLRC16 + FULL`，保留 `REEDEN_COLOR_REFRESH=legacy` 回退开关。详见[本次发布说明](docs/releases/v0.7.10.md)。
 
 v0.7.9 针对未装过 KOReader 的设备在安装后原生书架扫入大量 Reeden 图标的问题，在 USB 安装器（`install.py`）与设备端安装脚本（`scripts/install.sh`）中自动检查并补齐 `.kobo/Kobo/Kobo eReader.conf` 的 `[FeatureSettings]/ExcludeSyncFolders` 隐藏目录忽略规则，保留已有自定义配置与原始字节。详见[v0.7.9 发布说明](docs/releases/v0.7.9.md)。
 
@@ -48,7 +48,7 @@ v0.7.5 已整合 Wi-Fi 桥接、夜间彩字分区刷新、翻页动画与文字
 |---|---|
 | **支持设备** | Kobo Clara Colour（产品代码 `393`，MT8113T，1072×1448 32bpp，旋转 `3`） |
 | **已测固件** | `4.46.23836`（ARMHF Linux 4.9.77） |
-| **前置插件** | Kobo 已安装 [NickelMenu](https://pgaskin.net/NickelMenu/)（存在 `/mnt/onboard/.adds/nm/` 目录） |
+| **前置插件** | Kobo 已安装 [NickelMenu](https://pgaskin.net/NickelMenu/)（存在 `/mnt/onboard/.adds/nm/` 目录；未安装可下载 `KoboRoot.tgz` 放入 Kobo 的 `.kobo/` 目录，安全弹出后等待重启，右下角出现 NickelMenu 图标即安装完成） |
 | **官方核心** | 支持官网**Kindle `1.43.2+791`** 与 **`1.43.1+780`** (`Reeden-kindle.zip`，可自行下载或由安装脚本自动从官网拉取并校验) |
 | **电脑环境** | macOS / Windows / Linux，安装有 **Python 3.10+**（仅用标准库，无需安装 Zig、C 编译器或第三方包） |
 
@@ -109,7 +109,7 @@ python3 install.py --official-core /path/to/Reeden-kindle.zip --output package
 
 ---
 
-## 三、核心适配特性 (0.7.5)
+## 三、核心适配特性
 
 - **原字节复用官方核心（双版本支持）**：同时支持 **`1.43.2+791`** 与 **`1.43.1+780`**，`libflutter_engine.so`、`libapp.so` 及原始资源保持原字节不变；不修改账号、授权或付费逻辑；禁用 Kindle 自更新覆盖 Kobo 宿主。
 - **墨水屏刷新策略（对齐 KOReader MTK）**：
@@ -120,7 +120,7 @@ python3 install.py --official-core /path/to/Reeden-kindle.zip --output package
 - **前光与冷暖光控制（自适应 `1.43.2+` 原生滑块与 `1.43.1` 叠画滑块）**：
   - **`1.43.2+791`**：直接对接 Reeden 官方 UI 原生新增的「暖光」滑块（`currentAmberLevel` `0..24` 映射至底层 `lm3630a_led/color` `10..0` 反向混光），自动持久化至 `userdata/kobo-light.conf`
   - **`1.43.1+780`**：在「书页中央 → 显示」前光行下方合成硬件「冷暖」控制行（0 最冷 ～ 100 最暖，10% 步进）
-- **电源键锁屏（含 `1.43.2+` 彩色与透明叠底锁屏）、深度休眠与唤醒恢复 (0.7.5)**：
+- **电源键锁屏（含 `1.43.2+` 彩色与透明叠底锁屏）、深度休眠与唤醒恢复**：
   - 支持「自定义锁屏画面」（在 `1.43.2+791` 下支持 3/4 通道 **RGB 彩色锁屏封面**与**透明区域叠在当前书页上**），短按电源键锁屏并进入 Linux `mem` 深度休眠（充电时按 MTK 限制仅锁屏关灯、跳过内核深睡），再按直接唤醒回到当前书页
   - 使用独立非 `SIGCHLD` (`__WCLONE`) 监督进程等待休眠脚本，避免与 Dart 3.12.2 全局 `wait()` 回收线程竞争导致唤醒卡死
   - 记录 `preparing / suspended / resuming / complete` 阶段时间戳；准备或唤醒恢复超过 45 秒由 `guardian.sh` 自动恢复 Kobo 原生界面
@@ -139,6 +139,23 @@ python3 install.py --official-core /path/to/Reeden-kindle.zip --output package
 5. **紧急恢复与卸载**：
    - 重新点击 NickelMenu 中的 `Reeden`（自动恢复），或 SSH 运行 `sh /mnt/onboard/.adds/reeden-kobo/recover.sh`
    - 卸载：退出后连接 USB，双击电脑端「一键卸载」脚本，默认保留完整备份（见下一节）
+
+### 推荐阅读设置
+
+- **纯白底主题**：建议在 Reeden 阅读设置中开启「水波纹翻页（快档）」，普通「翻页动画」选「无动画」，翻页更利落。
+- **彩色壁纸 / 边框主题**：`v0.7.10` 开箱即已优化；在满屏画卷或深色花纹背景上若觉文字略淡，可将字体调深（纯黑）并略调前光，同时保持 Reeden 自带的定期全刷开启。
+- **锁屏封面**：建议在「我的 → 墨水屏」开启「自定义锁屏画面」。
+
+### 常见问题（FAQ）
+
+1. **点击 `Reeden` 后为何要等几秒才进入界面？**  
+   每次启动都会先完成文件完整性校验，并在后台渲染完首帧后再接管屏幕，等待几秒属于正常现象。
+2. **升级后生成的 `.adds/reeden-kobo-backup-*` 可以删吗？**  
+   可以。该目录是保留数据升级时留下的旧版完整备份；确认新版运行正常后，连接 USB 手动删除即可释放空间。
+3. **没有手动下载官方 `Reeden-kindle.zip` 也能安装吗？**  
+   可以。如果电脑或「下载」目录里没有现成的官方包，运行一键安装脚本时直接按回车，脚本会自动从 Reeden 官网拉取最新包并校验 SHA-256。
+4. **此前旧版安装后原生书架扫入了大量 Reeden 图标怎么办？**  
+   请用新版一键安装（保留数据升级）并重启一次 Kobo，让 `ExcludeSyncFolders` 规则生效清理旧条目；如原生系统清理时删掉了部分已索引资源，再运行一次一键安装即可自动补全。详细步骤见[安装与卸载指南](docs/安装与卸载.md)。
 
 ## 五、一键卸载（USB，免 SSH）
 
@@ -197,7 +214,7 @@ python3 uninstall.py --usb --purge
 
 ## 七、验证范围与版本发布
 
-[0.7.5 发布说明](docs/releases/v0.7.5.md) 和 [真机验收记录](docs/真机验收-0.7.2.md) 区分自动化验证与已完成的设备测试。隔离测试及 QEMU 不能替代隔夜休眠和真实功耗测量。
+[v0.7.10 发布说明](docs/releases/v0.7.10.md)、历史 [0.7.5 发布说明](docs/releases/v0.7.5.md) 和 [真机验收记录](docs/真机验收-0.7.2.md) 区分自动化验证与已完成的设备测试。隔离测试及 QEMU 不能替代隔夜休眠和真实功耗测量。
 
 新 Release 由标签 CI 构建：标签、源码 ZIP、安装 ZIP 的代码来自同一提交，附件提供 `COMMIT.txt` 和 `SHA256SUMS`。请勿忽略 Experimental 标记。旧历史中的路径及私人示例地址已清理，已有克隆请参阅 [历史清理说明](docs/历史清理.md)。
 

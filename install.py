@@ -864,7 +864,8 @@ def install_to_usb_mount(pkg_dir: pathlib.Path, mount: pathlib.Path, allow_upgra
     if not nm_dir.is_dir():
         raise RuntimeError(
             f'未检测到 NickelMenu 目录 ({nm_dir})。\n'
-            '请先为 Kobo 安装 NickelMenu (https://pgaskin.net/NickelMenu/)，安装脚本未对设备做任何更改。'
+            '请先为 Kobo 安装 NickelMenu (https://pgaskin.net/NickelMenu/)：\n'
+            '  下载最新版 KoboRoot.tgz 放入 Kobo 的 .kobo/ 目录，安全弹出等待重启后重试。安装脚本未对设备做任何更改。'
         )
     dest = mount / '.adds' / 'reeden-kobo'
     entry = nm_dir / 'reeden-kobo'
@@ -954,6 +955,7 @@ def install_to_usb_mount(pkg_dir: pathlib.Path, mount: pathlib.Path, allow_upgra
         exclude_status = 'manual_required'
     if backup is not None:
         print(f'✅ USB 一键升级完成！原阅读进度、笔记、冷暖光设置和书库已保留（旧版备份于 {backup.name}）。')
+        print(f'ℹ️  旧版多条 NickelMenu 菜单已精简为单一「Reeden」入口；确认新版运行正常后可手动删除 .adds/{backup.name} 释放空间。')
     else:
         print(f'✅ USB 一键安装完成！所有 {len(sums_lines)} 个文件已在 Kobo 磁盘上通过 SHA-256 校验。')
     if exclude_status in ('added', 'updated'):
@@ -972,6 +974,9 @@ def install_to_usb_mount(pkg_dir: pathlib.Path, mount: pathlib.Path, allow_upgra
             f'    ExcludeSyncFolders={KOBO_EXCLUDE_SYNC_FOLDERS}'
         )
         print('👉 下一步：安全弹出 Kobo USB 盘，回到 Kobo 原生主界面，点击右下角 NickelMenu →「Reeden」即可启动。')
+    print('💡 实用提示：')
+    print('   • 退出回原生系统：同时按住屏幕左上角 + 右上角约 2 秒')
+    print('   • 推荐阅读设置：纯白底可开「水波纹翻页（快档）」+ 普通翻页动画选「无动画」；彩色壁纸已默认优化；建议开启「自定义锁屏画面」')
 
 
 def install_via_ssh(
@@ -1037,6 +1042,9 @@ def install_via_ssh(
     print(result.stdout + result.stderr, end='')
     result.check_returncode()
     print('✅ SSH 一键安装完成（未自动启动应用）。请回到 Kobo 原生主界面，从 NickelMenu 点击「Reeden」启动。')
+    print('💡 实用提示：')
+    print('   • 退出回原生系统：同时按住屏幕左上角 + 右上角约 2 秒')
+    print('   • 推荐阅读设置：纯白底可开「水波纹翻页（快档）」+ 普通翻页动画选「无动画」；彩色壁纸已默认优化；建议开启「自定义锁屏画面」')
 
 
 def main() -> int:
